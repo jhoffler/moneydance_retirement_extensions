@@ -1063,40 +1063,93 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             
             sb.append("# Annual Financial Instructions for Year: ").append(yr).append("\n\n")
             
-            // Joint Info
+            // Joint Info Table
             sb.append("## Joint Financial Information\n")
-            sb.append("* **Total Portfolio Savings**: ").append(fmt(r["savings"])).append("\n")
-            sb.append("* **Taxable Cost Basis**: ").append(fmt(r["cost_basis"])).append("\n")
-            sb.append("* **IRA Savings**: ").append(fmt(r["ira_savings"]))
-                .append(" (Cash: ").append(fmt(r["ira_cash"])).append(")\n")
-            sb.append("* **Roth Savings**: ").append(fmt(r["roth_savings"]))
-                .append(" (Cash: ").append(fmt(r["roth_cash"])).append(")\n")
-            sb.append("* **Other (Brokerage) Savings**: ").append(fmt(r["other_savings"]))
-                .append(" (Cash: ").append(fmt(r["other_cash"])).append(")\n")
-            sb.append("* **DAF Savings**: ").append(fmt(r["daf_savings"])).append("\n")
-            sb.append("* **Dividends Earned**: ").append(fmt(r["dividends"])).append("\n")
-            sb.append("* **Interest Earned**: ").append(fmt(r["interest"])).append("\n")
+            val getD = { key: String -> (r[key] as? Number)?.toDouble() ?: 0.0 }
+            val iraSav = getD("ira_savings")
+            val iraCsh = getD("ira_cash")
+            val rothSav = getD("roth_savings")
+            val rothCsh = getD("roth_cash")
+            val taxSav = getD("other_savings")
+            val taxCsh = getD("other_cash")
+            val dafSav = getD("daf_savings")
+            val totSav = getD("savings")
+            val taxBasis = getD("cost_basis")
+            
+            val iraRoi = getD("ira_roi")
+            val rothRoi = getD("roth_roi")
+            val taxRoi = getD("other_roi")
+            val dafRoi = getD("daf_roi")
+            val totRoi = getD("roi")
+            
+            val iraDiv = max(0.0, iraSav - iraCsh) * 0.01
+            val rothDiv = max(0.0, rothSav - rothCsh) * 0.01
+            val taxDiv = max(0.0, taxSav - taxCsh) * 0.01
+            val totDiv = getD("dividends")
+            
+            val iraInt = iraCsh * 0.03
+            val rothInt = rothCsh * 0.03
+            val taxInt = taxCsh * 0.03
+            val totInt = getD("interest")
+
+            sb.append("| Savings Type | Total Balance | Cost Basis | Cash Portion | ROI | Dividends | Interest |\n")
+            sb.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
+            sb.append("| IRA | ").append(fmt(iraSav)).append(" | N/A | ").append(fmt(iraCsh)).append(" | ").append(fmt(iraRoi)).append(" | ").append(fmt(iraDiv)).append(" | ").append(fmt(iraInt)).append(" |\n")
+            sb.append("| Roth | ").append(fmt(rothSav)).append(" | N/A | ").append(fmt(rothCsh)).append(" | ").append(fmt(rothRoi)).append(" | ").append(fmt(rothDiv)).append(" | ").append(fmt(rothInt)).append(" |\n")
+            sb.append("| Taxable (Brokerage) | ").append(fmt(taxSav)).append(" | ").append(fmt(taxBasis)).append(" | ").append(fmt(taxCsh)).append(" | ").append(fmt(taxRoi)).append(" | ").append(fmt(taxDiv)).append(" | ").append(fmt(taxInt)).append(" |\n")
+            sb.append("| DAF | ").append(fmt(dafSav)).append(" | N/A | $0.00 | ").append(fmt(dafRoi)).append(" | $0.00 | $0.00 |\n")
+            sb.append("| **Total** | **").append(fmt(totSav)).append("** | **").append(fmt(taxBasis)).append("** | **").append(fmt(iraCsh + rothCsh + taxCsh)).append("** | **").append(fmt(totRoi)).append("** | **").append(fmt(totDiv)).append("** | **").append(fmt(totInt)).append("** |\n\n")
+
+            // Taxes & Expenditures
+            val ordRate = getD("fedOrdinaryBracketRate")
+            val ordLimit = getD("fedOrdinaryBracketLimit")
+            val cgRate = getD("fedCapGainsBracketRate")
+            val cgLimit = getD("fedCapGainsBracketLimit")
+            val ordInc = getD("fedTaxableOrdinaryIncome")
+            val totInc = getD("fedTotalTaxableIncome")
+            
+            val pctFmt = DecimalFormat("0.0%")
+            val ordRateStr = pctFmt.format(ordRate)
+            val cgRateStr = pctFmt.format(cgRate)
+            val ordLimitStr = if (ordLimit > 1e15) "Unlimited" else fmt(ordLimit)
+            val cgLimitStr = if (cgLimit > 1e15) "Unlimited" else fmt(cgLimit)
+            
+            sb.append("## Tax & Expense Information\n")
             sb.append("* **Total Taxes**: ").append(fmt(r["taxes"]))
                 .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
                 .append(", State: ").append(fmt(r["state_income_tax"]))
                 .append(", Payroll: ").append(fmt(r["payroll_tax"]))
                 .append(", Property: ").append(fmt(r["property_tax"])).append(")\n")
+            sb.append("* **Federal Ordinary Income Tax Bracket**:\n")
+            sb.append("  * Active Bracket Rate: **").append(ordRateStr).append("**\n")
+            sb.append("  * Taxable Ordinary Income: **").append(fmt(ordInc)).append("**\n")
+            sb.append("  * Bracket Income Limit: up to **").append(ordLimitStr).append("**\n")
+            sb.append("* **Federal Capital Gains Tax Bracket**:\n")
+            sb.append("  * Active Bracket Rate: **").append(cgRateStr).append("**\n")
+            sb.append("  * Combined Taxable Income: **").append(fmt(totInc)).append("**\n")
+            sb.append("  * Bracket Income Limit: up to **").append(cgLimitStr).append("**\n")
             sb.append("* **Expenditures**:\n")
             sb.append("  * Housing (Mortgage): ").append(fmt(r["housing"])).append("\n")
             sb.append("  * Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("\n")
             sb.append("  * Other spending: ").append(fmt(r["other"])).append("\n\n")
-            
-            // Individual Info
+
+            // Individual Info Table
             sb.append("## Individual Financial Information\n")
-            sb.append("### Self (Age: ").append(Math.round(age)).append(")\n")
-            sb.append("* Salary: ").append(fmt(r["salarySelf"])).append("\n")
-            sb.append("* Social Security: ").append(fmt(r["socsecSelf"])).append("\n")
-            sb.append("* Pension: ").append(fmt(r["pensionSelf"])).append("\n\n")
+            val salSelf = getD("salarySelf")
+            val salSp = getD("salarySpouse")
+            val ssSelf = getD("socsecSelf")
+            val ssSp = getD("socsecSpouse")
+            val penSelf = getD("pensionSelf")
+            val penSp = getD("pensionSpouse")
             
-            sb.append("### Spouse (Age: ").append(Math.round(ageSp)).append(")\n")
-            sb.append("* Salary: ").append(fmt(r["salarySpouse"])).append("\n")
-            sb.append("* Social Security: ").append(fmt(r["socsecSpouse"])).append("\n")
-            sb.append("* Pension: ").append(fmt(r["pensionSpouse"])).append("\n\n")
+            val totSelf = salSelf + ssSelf + penSelf
+            val totSp = salSp + ssSp + penSp
+            
+            sb.append("| Person (Age) | Salary | Social Security | Pension | Total |\n")
+            sb.append("| :--- | :--- | :--- | :--- | :--- |\n")
+            sb.append("| Self (").append(Math.round(age)).append(") | ").append(fmt(salSelf)).append(" | ").append(fmt(ssSelf)).append(" | ").append(fmt(penSelf)).append(" | ").append(fmt(totSelf)).append(" |\n")
+            sb.append("| Spouse (").append(Math.round(ageSp)).append(") | ").append(fmt(salSp)).append(" | ").append(fmt(ssSp)).append(" | ").append(fmt(penSp)).append(" | ").append(fmt(totSp)).append(" |\n")
+            sb.append("| **Total** | **").append(fmt(salSelf + salSp)).append("** | **").append(fmt(ssSelf + ssSp)).append("** | **").append(fmt(penSelf + penSp)).append("** | **").append(fmt(totSelf + totSp)).append("** |\n\n")
             
             // Action plan and distributions
             sb.append("## Action Plan & Distributions\n")

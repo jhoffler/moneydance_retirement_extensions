@@ -188,6 +188,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     var percentBelowGuardrail: Double = 0.0
     var guardrailAdjustmentMessage: String? = null
+    var fedOrdinaryBracketRate: Double = 0.0
+    var fedOrdinaryBracketLimit: Double = 0.0
+    var fedCapGainsBracketRate: Double = 0.0
+    var fedCapGainsBracketLimit: Double = 0.0
+    var fedTaxableOrdinaryIncome: Double = 0.0
+    var fedTotalTaxableIncome: Double = 0.0
 
     var standardDeduction: Double = 0.0
     var payrollTaxes: Double = 0.0
@@ -503,93 +509,62 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     private fun optimizeWithdrawalsForNetCash() {
         val targetNetCash = mortgage + elderCare + otherExpenses + travel
-        
-        val iraInterest = iraCash * INTEREST_RATE
-        val rothInterest = rothCash * INTEREST_RATE
-        val taxableInterest = taxableCash * INTEREST_RATE
-        
-        val iraNonCash = max(0.0, iraSavings - iraCash)
-        val rothNonCash = max(0.0, rothSavings - rothCash)
-        val taxableNonCash = max(0.0, taxableSavings - taxableCash)
-        
-        val iraDividends = iraNonCash * DIVIDEND_RATE
-        val rothDividends = rothNonCash * DIVIDEND_RATE
-        val taxableDividends = taxableNonCash * DIVIDEND_RATE
-        
-        val iraRoi = iraNonCash * investReturnPct
-        val rothRoi = rothNonCash * investReturnPct
-        val taxableRoi = taxableNonCash * investReturnPct
-        
-        var iraCashPre = iraCash + iraInterest + iraDividends
-        var iraNonCashPre = max(0.0, iraNonCash + iraRoi)
-        
-        var rothCashPre = rothCash + rothInterest + rothDividends
-        var rothNonCashPre = max(0.0, rothNonCash + rothRoi)
-        
-        var taxableCashPre = taxableCash + taxableInterest + taxableDividends
-        var taxableNonCashPre = max(0.0, taxableNonCash + taxableRoi)
-        
-        // Increase taxable cost basis by interest and dividends
-        taxableCostBasis = min(taxableSavings + taxableInterest + taxableDividends + taxableRoi, taxableCostBasis + taxableInterest + taxableDividends)
-        
-        val maxTaxable = max(0.0, taxableCashPre + taxableNonCashPre)
-        val costBasisRatio = if (maxTaxable > 0.0) taxableCostBasis / maxTaxable else 0.0
-        
         val estimatedGrossNeeded = targetNetCash + payrollTaxes + propertyTaxes + 5000.0
         val ssSelfPotential = calcPotentialSocSec(true)
         val ssSpousePotential = calcPotentialSocSec(false)
         val pensionSelfPotential = calcPotentialPension(true)
         val pensionSpousePotential = calcPotentialPension(false)
-        
         val cashThreshold = max(0.0, estimatedGrossNeeded - ssSelfPotential - ssSpousePotential - pensionSelfPotential - pensionSpousePotential)
         
         val isRoiPositive = investReturnPct >= 0.0
         
-        // Rebalance IRA Cash
-        if (isRoiPositive) {
-            val totalVal = iraCashPre + iraNonCashPre
-            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
-            val shift = targetCash - iraCashPre
-            iraCashPre += shift
-            iraNonCashPre -= shift
-        } else {
-            if (iraCashPre < cashThreshold && iraNonCashPre > 0.0) {
-                val toMove = min(iraNonCashPre, cashThreshold - iraCashPre)
-                iraCashPre += toMove
-                iraNonCashPre -= toMove
+        fun getStartCashAndStock(savings: Double, cashVal: Double): Pair<Double, Double> {
+            var cashStart = cashVal
+            var nonCashStart = max(0.0, savings - cashVal)
+            if (isRoiPositive) {
+                val targetCash = min(savings, max(cashThreshold, savings * 0.05))
+                val shift = targetCash - cashStart
+                cashStart += shift
+                nonCashStart -= shift
+            } else {
+                if (cashStart < cashThreshold && nonCashStart > 0.0) {
+                    val toMove = min(nonCashStart, cashThreshold - cashStart)
+                    cashStart += toMove
+                    nonCashStart -= toMove
+                }
             }
+            return Pair(cashStart, nonCashStart)
         }
         
-        // Rebalance Roth Cash
-        if (isRoiPositive) {
-            val totalVal = rothCashPre + rothNonCashPre
-            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
-            val shift = targetCash - rothCashPre
-            rothCashPre += shift
-            rothNonCashPre -= shift
-        } else {
-            if (rothCashPre < cashThreshold && rothNonCashPre > 0.0) {
-                val toMove = min(rothNonCashPre, cashThreshold - rothCashPre)
-                rothCashPre += toMove
-                rothNonCashPre -= toMove
-            }
-        }
+        val (iraCS, iraNCS) = getStartCashAndStock(iraSavings, iraCash)
+        val (rothCS, rothNCS) = getStartCashAndStock(rothSavings, rothCash)
+        val (taxCS, taxNCS) = getStartCashAndStock(taxableSavings, taxableCash)
         
-        // Rebalance Taxable Cash
-        if (isRoiPositive) {
-            val totalVal = taxableCashPre + taxableNonCashPre
-            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
-            val shift = targetCash - taxableCashPre
-            taxableCashPre += shift
-            taxableNonCashPre -= shift
-        } else {
-            if (taxableCashPre < cashThreshold && taxableNonCashPre > 0.0) {
-                val toMove = min(taxableNonCashPre, cashThreshold - taxableCashPre)
-                taxableCashPre += toMove
-                taxableNonCashPre -= toMove
-            }
-        }
+        val iraInterest = iraCS * INTEREST_RATE
+        val rothInterest = rothCS * INTEREST_RATE
+        val taxableInterest = taxCS * INTEREST_RATE
         
+        val iraDividends = iraNCS * DIVIDEND_RATE
+        val rothDividends = rothNCS * DIVIDEND_RATE
+        val taxableDividends = taxNCS * DIVIDEND_RATE
+        
+        val iraRoi = iraNCS * investReturnPct
+        val rothRoi = rothNCS * investReturnPct
+        val taxableRoi = taxNCS * investReturnPct
+        
+        var iraCashPre = iraCS + iraInterest + iraDividends
+        var iraNonCashPre = max(0.0, iraNCS + iraRoi)
+        
+        var rothCashPre = rothCS + rothInterest + rothDividends
+        var rothNonCashPre = max(0.0, rothNCS + rothRoi)
+        
+        var taxableCashPre = taxCS + taxableInterest + taxableDividends
+        var taxableNonCashPre = max(0.0, taxNCS + taxableRoi)
+        
+        // Increase taxable cost basis by interest and dividends
+        taxableCostBasis = min(taxableSavings + taxableInterest + taxableDividends + taxableRoi, taxableCostBasis + taxableInterest + taxableDividends)
+        
+        val maxTaxable = max(0.0, taxableCashPre + taxableNonCashPre)
         val maxIra = max(0.0, iraCashPre + iraNonCashPre)
         val maxRoth = max(0.0, rothCashPre + rothNonCashPre)
         
@@ -739,6 +714,21 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 break
             }
         }
+        
+        val finalStockSold = if (investReturnPct >= 0.0) {
+            min(taxableNonCashPre, taxableDistribution)
+        } else {
+            max(0.0, taxableDistribution - taxableCashPre)
+        }
+        val finalRealizedGain = simulateStockSale(finalStockSold)
+        val finalResult = calculateRetirementTax(iraDistribution, finalRealizedGain)
+        
+        fedOrdinaryBracketRate = finalResult.fedOrdinaryBracketRate
+        fedOrdinaryBracketLimit = finalResult.fedOrdinaryBracketLimit
+        fedCapGainsBracketRate = finalResult.fedCapGainsBracketRate
+        fedCapGainsBracketLimit = finalResult.fedCapGainsBracketLimit
+        fedTaxableOrdinaryIncome = finalResult.taxableOrdinaryIncome
+        fedTotalTaxableIncome = finalResult.taxableOrdinaryIncome + finalRealizedGain + dividends
 
         if (surplus > 0.0) {
             fundSavings(surplus)
@@ -799,14 +789,40 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val (iraC, iraN) = applyDist(iraCashPre, iraNonCashPre, iraDistribution)
         iraCashEnd = iraC
         iraSavingsEnd = iraC + iraN
+        if (iraDistribution > 0.0) {
+            val cashDep = if (investReturnPct < 0.0) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
+            val nonCashDep = iraDistribution - cashDep
+            if (cashDep > 0.0) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from IRA cash to cover expenses.")
+            }
+            if (nonCashDep > 0.0) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", nonCashDep)} from IRA stock (non-cash) to cover expenses or satisfy RMD.")
+            }
+        }
         
         val (rothC, rothN) = applyDist(rothCashPre, rothNonCashPre, rothDistribution)
         rothCashEnd = rothC
         rothSavingsEnd = rothC + rothN
+        if (rothDistribution > 0.0) {
+            val cashDep = if (investReturnPct < 0.0) min(rothCashPre, rothDistribution) else max(0.0, rothDistribution - min(rothNonCashPre, rothDistribution))
+            val nonCashDep = rothDistribution - cashDep
+            if (cashDep > 0.0) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Roth cash to cover expenses.")
+            }
+            if (nonCashDep > 0.0) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", nonCashDep)} from Roth stock (non-cash) to cover expenses.")
+            }
+        }
         
         val (taxC, taxN) = applyDist(taxableCashPre, taxableNonCashPre, taxableDistribution)
         taxableCashEnd = taxC
         taxableSavingsEnd = taxC + taxN
+        if (taxableDistribution > 0.0) {
+            val cashDep = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
+            if (cashDep > 0.0) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Taxable cash to cover expenses.")
+            }
+        }
         
         val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
         val prevStock = max(0.0, taxableSavings - taxableCash)
@@ -877,7 +893,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val ordinaryTax: Double,
         val capitalGainsTax: Double,
         val totalFederalTax: Double,
-        val totalStateTax: Double
+        val totalStateTax: Double,
+        val fedOrdinaryBracketRate: Double = 0.0,
+        val fedOrdinaryBracketLimit: Double = 0.0,
+        val fedCapGainsBracketRate: Double = 0.0,
+        val fedCapGainsBracketLimit: Double = 0.0
     )
 
     fun calculateRetirementTax(taxDeferredDist: Double, longTermGains: Double): TaxCalculationResult {
@@ -945,6 +965,30 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         capitalGainsTax = capGainsTax
         fedTaxes = ordTax + capGainsTax
 
+        var ordRate = 0.10
+        var ordLimit = Double.MAX_VALUE
+        for (idx in TAX_RATES_FED.indices) {
+            val bracket = TAX_RATES_FED[idx]
+            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            if (taxableOrdinaryIncome <= currentMax) {
+                ordRate = bracket.rate
+                ordLimit = currentMax
+                break
+            }
+        }
+
+        var cgRate = 0.0
+        var cgLimit = Double.MAX_VALUE
+        for (idx in CAP_GAINS_RATES_FED.indices) {
+            val bracket = CAP_GAINS_RATES_FED[idx]
+            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            if (totalTaxableIncome <= currentMax) {
+                cgRate = bracket.rate
+                cgLimit = currentMax
+                break
+            }
+        }
+
         return TaxCalculationResult(
             taxableSocialSecurity = taxableSS,
             taxableOrdinaryIncome = taxableOrdinaryIncome,
@@ -952,7 +996,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             ordinaryTax = ordTax,
             capitalGainsTax = capGainsTax,
             totalFederalTax = fedTaxes,
-            totalStateTax = stateTaxes
+            totalStateTax = stateTaxes,
+            fedOrdinaryBracketRate = ordRate,
+            fedOrdinaryBracketLimit = ordLimit,
+            fedCapGainsBracketRate = cgRate,
+            fedCapGainsBracketLimit = cgLimit
         )
     }
 
@@ -1297,6 +1345,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["salarySelf"] = salarySelf
         result["salarySpouse"] = salarySpouse
         result["action_logs"] = actionLogs.toList()
+        result["fedOrdinaryBracketRate"] = fedOrdinaryBracketRate
+        result["fedOrdinaryBracketLimit"] = fedOrdinaryBracketLimit
+        result["fedCapGainsBracketRate"] = fedCapGainsBracketRate
+        result["fedCapGainsBracketLimit"] = fedCapGainsBracketLimit
+        result["fedTaxableOrdinaryIncome"] = fedTaxableOrdinaryIncome
+        result["fedTotalTaxableIncome"] = fedTotalTaxableIncome
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
         return result
