@@ -13,6 +13,14 @@ import kotlin.math.sqrt
 // 1. Domain structures & Constants
 data class TaxBracket(val rate: Double, val maxIncome: Double)
 
+data class StockLot(
+    var costBasis: Double,
+    var currentVal: Double
+) {
+    val basisRatio: Double
+        get() = if (currentVal > 0.0) costBasis / currentVal else 0.0
+}
+
 val TAX_RATES_FED = listOf(
     TaxBracket(0.10, 24800.0),
     TaxBracket(0.12, 100800.0),
@@ -144,6 +152,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var rothCash: Double = 0.0
     var taxableCash: Double = 0.0
 
+    var taxableLots = mutableListOf<StockLot>()
+
     var iraSavingsEnd: Double = 0.0
     var iraCashEnd: Double = 0.0
     var rothSavingsEnd: Double = 0.0
@@ -151,6 +161,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var taxableSavingsEnd: Double = 0.0
     var taxableCashEnd: Double = 0.0
     var taxableCostBasisEnd: Double = 0.0
+    var taxableLotsEnd = mutableListOf<StockLot>()
     var dafSavingsEnd: Double = 0.0
 
     var iraDistribution: Double = 0.0
@@ -270,6 +281,41 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             iraCash = max(0.0, min(iraSavings, iraCash))
             rothCash = max(0.0, min(rothSavings, rothCash))
             taxableCash = max(0.0, min(taxableSavings, taxableCash))
+
+            val lotsStr = formData["start_taxable_lots"]
+            if (lotsStr != null && lotsStr.isNotEmpty()) {
+                val lotParts = lotsStr.split(";")
+                for (part in lotParts) {
+                    val subParts = part.split(",")
+                    if (subParts.size == 2) {
+                        val basis = subParts[0].toDoubleOrNull() ?: 0.0
+                        val value = subParts[1].toDoubleOrNull() ?: 0.0
+                        if (value > 0.0) {
+                            taxableLots.add(StockLot(costBasis = basis, currentVal = value))
+                        }
+                    }
+                }
+            }
+            val stockVal = max(0.0, taxableSavings - taxableCash)
+            val stockBasis = max(0.0, taxableCostBasis - taxableCash)
+            if (taxableLots.isEmpty() && stockVal > 0.0) {
+                val lotVal = stockVal / 5.0
+                val avgRatio = if (stockVal > 0.0) stockBasis / stockVal else 0.5
+                val ratios = listOf(0.4, 0.7, 1.0, 1.3, 1.6)
+                var basisSum = 0.0
+                for (rMultiplier in ratios) {
+                    val ratio = max(0.05, min(1.0, avgRatio * rMultiplier))
+                    val basis = lotVal * ratio
+                    taxableLots.add(StockLot(costBasis = basis, currentVal = lotVal))
+                    basisSum += basis
+                }
+                if (basisSum > 0.0) {
+                    val scale = stockBasis / basisSum
+                    for (lot in taxableLots) {
+                        lot.costBasis = max(0.0, min(lot.currentVal, lot.costBasis * scale))
+                    }
+                }
+            }
         } else {
             iraSavings = previousYear.iraSavingsEnd
             iraCash = previousYear.iraCashEnd
@@ -280,6 +326,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             taxableCostBasis = previousYear.taxableCostBasisEnd
             dafSavings = previousYear.dafSavingsEnd
             dafDistribution = previousYear.dafDistribution * (1.0 + previousYear.inflationPct)
+
+            // Clone and grow previous year's stock lots
+            for (prevLot in previousYear.taxableLotsEnd) {
+                taxableLots.add(StockLot(costBasis = prevLot.costBasis, currentVal = prevLot.currentVal * (1.0 + investReturnPct)))
+            }
         }
 
         val maxDafSavings = dafSavings * (1.0 + investReturnPct)
@@ -541,7 +592,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         while (ira <= loopMaxIra) {
             var brokerageNeeded = max(0.0, estimatedGrossNeeded - ira - fixedCash)
             brokerageNeeded = min(brokerageNeeded, maxTaxable)
-            val realizedGain = brokerageNeeded * (1.0 - costBasisRatio)
+            val stockSold = if (investReturnPct >= 0.0) {
+                min(taxableNonCashPre, brokerageNeeded)
+            } else {
+                max(0.0, brokerageNeeded - taxableCashPre)
+            }
+            val realizedGain = simulateStockSale(stockSold)
 
             val result = calculateRetirementTax(ira, realizedGain)
 
@@ -587,7 +643,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             }
 
             currentBrokerageSale += additionalNeeded
-            val realizedGain = currentBrokerageSale * (1.0 - costBasisRatio)
+            val stockSold = if (investReturnPct >= 0.0) {
+                min(taxableNonCashPre, currentBrokerageSale)
+            } else {
+                max(0.0, currentBrokerageSale - taxableCashPre)
+            }
+            val realizedGain = simulateStockSale(stockSold)
             val result = calculateRetirementTax(currentIRA, realizedGain)
             totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
             netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
@@ -614,7 +675,13 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     additionalNeeded = maxIra - currentIRA
                 }
                 currentIRA += additionalNeeded
-                val result = calculateRetirementTax(currentIRA, currentBrokerageSale * (1.0 - costBasisRatio))
+                val stockSold = if (investReturnPct >= 0.0) {
+                    min(taxableNonCashPre, currentBrokerageSale)
+                } else {
+                    max(0.0, currentBrokerageSale - taxableCashPre)
+                }
+                val realizedGain = simulateStockSale(stockSold)
+                val result = calculateRetirementTax(currentIRA, realizedGain)
                 totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                 netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
 
@@ -639,7 +706,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         dafContribution = 0.0
 
         for (iter in 0 until 5) {
-            val realizedGain = taxableDistribution * (1.0 - costBasisRatio)
+            val stockSold = if (investReturnPct >= 0.0) {
+                min(taxableNonCashPre, taxableDistribution)
+            } else {
+                max(0.0, taxableDistribution - taxableCashPre)
+            }
+            val realizedGain = simulateStockSale(stockSold)
             val result = calculateRetirementTax(iraDistribution, realizedGain)
             totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
             netCash = (iraDistribution + taxableDistribution + fixedCash) - totalTax
@@ -662,6 +734,30 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             rothCashPre, rothNonCashPre,
             taxableCashPre, taxableNonCashPre
         )
+    }
+
+    private fun simulateStockSale(amountToSell: Double): Double {
+        if (amountToSell <= 0.0) return 0.0
+        val sortedLots = taxableLots.map { StockLot(it.costBasis, it.currentVal) }
+            .filter { it.currentVal > 0.0 }
+            .sortedByDescending { it.basisRatio }
+            
+        var remaining = amountToSell
+        var totalRealizedGain = 0.0
+        
+        for (lot in sortedLots) {
+            if (remaining <= 0.0) break
+            val soldFromLot = min(lot.currentVal, remaining)
+            val basisRatio = lot.basisRatio
+            val realizedBasis = soldFromLot * basisRatio
+            val gain = soldFromLot - realizedBasis
+            totalRealizedGain += gain
+            remaining -= soldFromLot
+        }
+        if (remaining > 0.0) {
+            totalRealizedGain += remaining
+        }
+        return totalRealizedGain
     }
 
     private fun calculateEndingBalances(
@@ -697,17 +793,51 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         taxableCashEnd = taxC
         taxableSavingsEnd = taxC + taxN
         
-        val maxTaxable = taxableCashPre + taxableNonCashPre
-        val prevBasisRatio = if (maxTaxable > 0.0) taxableCostBasis / maxTaxable else 0.0
+        val activeLots = taxableLots.map { StockLot(it.costBasis, it.currentVal) }.toMutableList()
         
-        if (taxableDistribution > 0.0) {
-            taxableCostBasisEnd = taxableCostBasis - (taxableDistribution * prevBasisRatio)
-        } else if (taxableDistribution < 0.0) {
-            taxableCostBasisEnd = taxableCostBasis - taxableDistribution
-        } else {
-            taxableCostBasisEnd = taxableCostBasis
+        val prevStock = max(0.0, taxableSavings - taxableCash)
+        val prevStockWithRoi = prevStock * (1.0 + investReturnPct)
+        val rebalBuy = taxableNonCashPre - prevStockWithRoi
+        if (rebalBuy > 0.0) {
+            activeLots.add(StockLot(costBasis = rebalBuy, currentVal = rebalBuy))
         }
-        taxableCostBasisEnd = max(0.0, min(taxableCostBasisEnd, taxableSavingsEnd))
+        
+        if (dafContribution > 0.0) {
+            activeLots.sortBy { it.basisRatio }
+            var remainingDaf = dafContribution
+            for (lot in activeLots) {
+                if (remainingDaf <= 0.0) break
+                val toDeplete = min(lot.currentVal, remainingDaf)
+                lot.costBasis -= toDeplete * lot.basisRatio
+                lot.currentVal -= toDeplete
+                remainingDaf -= toDeplete
+            }
+        }
+        
+        val stockSold = if (investReturnPct >= 0.0) {
+            min(taxableNonCashPre, taxableDistribution)
+        } else {
+            max(0.0, taxableDistribution - taxableCashPre)
+        }
+        if (stockSold > 0.0) {
+            activeLots.sortByDescending { it.basisRatio }
+            var remainingSale = stockSold
+            for (lot in activeLots) {
+                if (remainingSale <= 0.0) break
+                val toDeplete = min(lot.currentVal, remainingSale)
+                lot.costBasis -= toDeplete * lot.basisRatio
+                lot.currentVal -= toDeplete
+                remainingSale -= toDeplete
+            }
+        }
+        
+        val stockBought = max(0.0, taxN - taxableNonCashPre)
+        if (stockBought > 0.0) {
+            activeLots.add(StockLot(costBasis = stockBought, currentVal = stockBought))
+        }
+        
+        taxableLotsEnd = activeLots.filter { it.currentVal > 0.01 }.toMutableList()
+        taxableCostBasisEnd = taxableLotsEnd.sumOf { it.costBasis } + taxableCashEnd
         
         dafSavingsEnd = dafSavings * (1.0 + investReturnPct) - dafDistribution + dafContribution
     }

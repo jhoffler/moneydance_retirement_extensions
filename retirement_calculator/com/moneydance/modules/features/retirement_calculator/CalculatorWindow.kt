@@ -399,6 +399,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     }
 
     private fun createSavingsPanel(): JScrollPane {
+        textFields["start_taxable_lots"] = JTextField()
         val p = createGridPanel(8, 2)
         addFieldRow(p, "IRA Savings:", "start_ira_savings")
         addFieldRow(p, "  IRA Cash Portion:", "start_ira_cash")
@@ -695,6 +696,25 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                         return sum
                     }
 
+                    val taxableLots = mutableListOf<String>()
+                    for (acct in divider.taxables) {
+                        if (acct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.INVESTMENT) {
+                            val subAccounts = acct.getSubAccounts()
+                            if (subAccounts != null) {
+                                for (subAcct in subAccounts) {
+                                    if (subAcct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.SECURITY) {
+                                        val secVal = getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                        val secBasis = getHistoricalSecurityCostBasis(mdBook, subAcct, dateInt)
+                                        if (secVal > 0L) {
+                                            taxableLots.add("${secBasis / 100.0},${secVal / 100.0}")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    val lotsStr = taxableLots.joinToString(";")
+
                     val iraBal = sumAccounts(divider.iras)
                     val iraCash = sumCash(divider.iras)
                     val rothBal = sumAccounts(divider.roths)
@@ -705,6 +725,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                     val dafBal = sumAccounts(dafAccounts)
 
                     SwingUtilities.invokeLater {
+                        textFields["start_taxable_lots"]?.text = lotsStr
                         textFields["start_ira_savings"]?.text = formatDollar(iraBal / 100.0)
                         textFields["start_ira_cash"]?.text = formatDollar(iraCash / 100.0)
                         textFields["start_roth_savings"]?.text = formatDollar(rothBal / 100.0)
