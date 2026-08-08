@@ -156,6 +156,10 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         printBtn.addActionListener { printReport() }
         toolbar.add(printBtn)
         
+        val exportBtn = JButton("Export")
+        exportBtn.addActionListener { exportInstructions() }
+        toolbar.add(exportBtn)
+        
         toolbar.addSeparator()
         
         val loadBtn = JButton("Load Balances")
@@ -706,7 +710,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                         val secVal = getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
                                         val secBasis = getHistoricalSecurityCostBasis(mdBook, subAcct, dateInt)
                                         if (secVal > 0L) {
-                                            taxableLots.add("${secBasis / 100.0},${secVal / 100.0}")
+                                            val rawName = subAcct.getAccountName() ?: "Stock"
+                                            val encName = java.net.URLEncoder.encode(rawName, "UTF-8")
+                                            taxableLots.add("$encName,${secBasis / 100.0},${secVal / 100.0}")
                                         }
                                     }
                                 }
@@ -1030,6 +1036,87 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             )
         } catch (e: Exception) {
             JOptionPane.showMessageDialog(this, "Error printing: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
+        }
+    }
+
+    private fun exportInstructions() {
+        if (currentResults.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No calculated projections found. Please recalculate first.", "Error", JOptionPane.ERROR_MESSAGE)
+            return
+        }
+        
+        val sb = StringBuilder()
+        val fmt = { v: Any? ->
+            val d = when (v) {
+                is Number -> v.toDouble()
+                is String -> v.replace("$", "").replace(",", "").toDoubleOrNull() ?: 0.0
+                else -> 0.0
+            }
+            DecimalFormat("$#,##0.00").format(d)
+        }
+        
+        for (i in currentResults.indices) {
+            val r = currentResults[i]
+            val yr = r["year"]?.toString() ?: "Unknown"
+            val age = (r["age"] as? Number)?.toDouble() ?: 0.0
+            val ageSp = (r["age_spouse"] as? Number)?.toDouble() ?: 0.0
+            
+            sb.append("# Annual Financial Instructions for Year: ").append(yr).append("\n\n")
+            
+            // Joint Info
+            sb.append("## Joint Financial Information\n")
+            sb.append("* **Total Portfolio Savings**: ").append(fmt(r["savings"])).append("\n")
+            sb.append("* **Taxable Cost Basis**: ").append(fmt(r["cost_basis"])).append("\n")
+            sb.append("* **IRA Savings**: ").append(fmt(r["ira_savings"]))
+                .append(" (Cash: ").append(fmt(r["ira_cash"])).append(")\n")
+            sb.append("* **Roth Savings**: ").append(fmt(r["roth_savings"]))
+                .append(" (Cash: ").append(fmt(r["roth_cash"])).append(")\n")
+            sb.append("* **Other (Brokerage) Savings**: ").append(fmt(r["other_savings"]))
+                .append(" (Cash: ").append(fmt(r["other_cash"])).append(")\n")
+            sb.append("* **DAF Savings**: ").append(fmt(r["daf_savings"])).append("\n")
+            sb.append("* **Dividends Earned**: ").append(fmt(r["dividends"])).append("\n")
+            sb.append("* **Interest Earned**: ").append(fmt(r["interest"])).append("\n")
+            sb.append("* **Total Taxes**: ").append(fmt(r["taxes"]))
+                .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
+                .append(", State: ").append(fmt(r["state_income_tax"]))
+                .append(", Payroll: ").append(fmt(r["payroll_tax"]))
+                .append(", Property: ").append(fmt(r["property_tax"])).append(")\n")
+            sb.append("* **Expenditures**:\n")
+            sb.append("  * Housing (Mortgage): ").append(fmt(r["housing"])).append("\n")
+            sb.append("  * Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("\n")
+            sb.append("  * Other spending: ").append(fmt(r["other"])).append("\n\n")
+            
+            // Individual Info
+            sb.append("## Individual Financial Information\n")
+            sb.append("### Self (Age: ").append(Math.round(age)).append(")\n")
+            sb.append("* Salary: ").append(fmt(r["salarySelf"])).append("\n")
+            sb.append("* Social Security: ").append(fmt(r["socsecSelf"])).append("\n")
+            sb.append("* Pension: ").append(fmt(r["pensionSelf"])).append("\n\n")
+            
+            sb.append("### Spouse (Age: ").append(Math.round(ageSp)).append(")\n")
+            sb.append("* Salary: ").append(fmt(r["salarySpouse"])).append("\n")
+            sb.append("* Social Security: ").append(fmt(r["socsecSpouse"])).append("\n")
+            sb.append("* Pension: ").append(fmt(r["pensionSpouse"])).append("\n\n")
+            
+            // Action plan and distributions
+            sb.append("## Action Plan & Distributions\n")
+            val logs = r["action_logs"] as? List<String> ?: emptyList()
+            if (logs.isEmpty()) {
+                sb.append("No stock transactions or rebalancing events occurred this year.\n")
+            } else {
+                for (log in logs) {
+                    sb.append("* ").append(log).append("\n")
+                }
+            }
+            sb.append("\n<div style=\"page-break-after: always;\"></div>\n\n")
+        }
+        
+        try {
+            val selection = java.awt.datatransfer.StringSelection(sb.toString())
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
+            JOptionPane.showMessageDialog(this, "Annual Financial Instruction Sheet exported successfully and copied to clipboard!", "Success", JOptionPane.INFORMATION_MESSAGE)
+        } catch (e: Exception) {
+            JOptionPane.showMessageDialog(this, "Failed to copy to clipboard: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
         }
     }
 }

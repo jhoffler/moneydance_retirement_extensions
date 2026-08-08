@@ -14,6 +14,7 @@ import kotlin.math.sqrt
 data class TaxBracket(val rate: Double, val maxIncome: Double)
 
 data class StockLot(
+    var name: String,
     var costBasis: Double,
     var currentVal: Double
 ) {
@@ -163,6 +164,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var taxableCostBasisEnd: Double = 0.0
     var taxableLotsEnd = mutableListOf<StockLot>()
     var dafSavingsEnd: Double = 0.0
+    val actionLogs = mutableListOf<String>()
 
     var iraDistribution: Double = 0.0
     var rothDistribution: Double = 0.0
@@ -287,11 +289,22 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 val lotParts = lotsStr.split(";")
                 for (part in lotParts) {
                     val subParts = part.split(",")
-                    if (subParts.size == 2) {
+                    if (subParts.size == 3) {
+                        val decodedName = try {
+                            java.net.URLDecoder.decode(subParts[0], "UTF-8")
+                        } catch (e: Exception) {
+                            "Stock"
+                        }
+                        val basis = subParts[1].toDoubleOrNull() ?: 0.0
+                        val value = subParts[2].toDoubleOrNull() ?: 0.0
+                        if (value > 0.0) {
+                            taxableLots.add(StockLot(name = decodedName, costBasis = basis, currentVal = value))
+                        }
+                    } else if (subParts.size == 2) {
                         val basis = subParts[0].toDoubleOrNull() ?: 0.0
                         val value = subParts[1].toDoubleOrNull() ?: 0.0
                         if (value > 0.0) {
-                            taxableLots.add(StockLot(costBasis = basis, currentVal = value))
+                            taxableLots.add(StockLot(name = "Stock Lot", costBasis = basis, currentVal = value))
                         }
                     }
                 }
@@ -302,11 +315,13 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 val lotVal = stockVal / 5.0
                 val avgRatio = if (stockVal > 0.0) stockBasis / stockVal else 0.5
                 val ratios = listOf(0.4, 0.7, 1.0, 1.3, 1.6)
+                val lotNames = listOf("Stock Lot A", "Stock Lot B", "Stock Lot C", "Stock Lot D", "Stock Lot E")
                 var basisSum = 0.0
-                for (rMultiplier in ratios) {
+                for (i in ratios.indices) {
+                    val rMultiplier = ratios[i]
                     val ratio = max(0.05, min(1.0, avgRatio * rMultiplier))
                     val basis = lotVal * ratio
-                    taxableLots.add(StockLot(costBasis = basis, currentVal = lotVal))
+                    taxableLots.add(StockLot(name = lotNames[i], costBasis = basis, currentVal = lotVal))
                     basisSum += basis
                 }
                 if (basisSum > 0.0) {
@@ -329,7 +344,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
             // Clone and grow previous year's stock lots
             for (prevLot in previousYear.taxableLotsEnd) {
-                taxableLots.add(StockLot(costBasis = prevLot.costBasis, currentVal = prevLot.currentVal * (1.0 + investReturnPct)))
+                taxableLots.add(StockLot(name = prevLot.name, costBasis = prevLot.costBasis, currentVal = prevLot.currentVal * (1.0 + investReturnPct)))
             }
         }
 
@@ -738,7 +753,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     private fun simulateStockSale(amountToSell: Double): Double {
         if (amountToSell <= 0.0) return 0.0
-        val sortedLots = taxableLots.map { StockLot(it.costBasis, it.currentVal) }
+        val sortedLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }
             .filter { it.currentVal > 0.0 }
             .sortedByDescending { it.basisRatio }
             
@@ -793,47 +808,52 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         taxableCashEnd = taxC
         taxableSavingsEnd = taxC + taxN
         
-        val activeLots = taxableLots.map { StockLot(it.costBasis, it.currentVal) }.toMutableList()
-        
+        val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
         val prevStock = max(0.0, taxableSavings - taxableCash)
         val prevStockWithRoi = prevStock * (1.0 + investReturnPct)
-        val rebalBuy = taxableNonCashPre - prevStockWithRoi
-        if (rebalBuy > 0.0) {
-            activeLots.add(StockLot(costBasis = rebalBuy, currentVal = rebalBuy))
-        }
         
+        // 1. DAF Donation (most appreciated / lowest ratio first)
         if (dafContribution > 0.0) {
             activeLots.sortBy { it.basisRatio }
             var remainingDaf = dafContribution
             for (lot in activeLots) {
                 if (remainingDaf <= 0.0) break
                 val toDeplete = min(lot.currentVal, remainingDaf)
-                lot.costBasis -= toDeplete * lot.basisRatio
+                val realizedBasis = toDeplete * lot.basisRatio
+                
+                actionLogs.add("Donate \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}) directly to Donor Advised Fund (DAF).")
+                
+                lot.costBasis -= realizedBasis
                 lot.currentVal -= toDeplete
                 remainingDaf -= toDeplete
             }
         }
         
-        val stockSold = if (investReturnPct >= 0.0) {
-            min(taxableNonCashPre, taxableDistribution)
-        } else {
-            max(0.0, taxableDistribution - taxableCashPre)
-        }
-        if (stockSold > 0.0) {
+        // 2. Net change (excluding DAF)
+        val change = taxN + dafContribution - prevStockWithRoi
+        if (change < 0.0) {
+            val stockSold = -change
             activeLots.sortByDescending { it.basisRatio }
             var remainingSale = stockSold
             for (lot in activeLots) {
                 if (remainingSale <= 0.0) break
                 val toDeplete = min(lot.currentVal, remainingSale)
-                lot.costBasis -= toDeplete * lot.basisRatio
+                val realizedBasis = toDeplete * lot.basisRatio
+                val gain = toDeplete - realizedBasis
+                
+                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: \$${String.format("%,.2f", gain)}) to cover spending or manage cash.")
+                
+                lot.costBasis -= realizedBasis
                 lot.currentVal -= toDeplete
                 remainingSale -= toDeplete
             }
-        }
-        
-        val stockBought = max(0.0, taxN - taxableNonCashPre)
-        if (stockBought > 0.0) {
-            activeLots.add(StockLot(costBasis = stockBought, currentVal = stockBought))
+        } else if (change > 0.0) {
+            val stockBought = change
+            val lotName = "Stock purchased in $year"
+            
+            actionLogs.add("Purchase \$${String.format("%,.2f", stockBought)} of stock named '$lotName' to reinvest cash.")
+            
+            activeLots.add(StockLot(name = lotName, costBasis = stockBought, currentVal = stockBought))
         }
         
         taxableLotsEnd = activeLots.filter { it.currentVal > 0.01 }.toMutableList()
@@ -1274,6 +1294,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["rmd"] = suggestRmd()
         result["tax_limit_reason"] = taxLimitReason ?: ""
         result["invest"] = (iraSavingsEnd + rothSavingsEnd + taxableSavingsEnd) - (iraSavings + rothSavings + taxableSavings)
+        result["salarySelf"] = salarySelf
+        result["salarySpouse"] = salarySpouse
+        result["action_logs"] = actionLogs.toList()
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
         return result
