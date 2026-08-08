@@ -477,21 +477,48 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         
         val cashThreshold = max(0.0, estimatedGrossNeeded - ssSelfPotential - ssSpousePotential - pensionSelfPotential - pensionSpousePotential)
         
-        // Refill Cash from Non-Cash if below threshold
-        if (iraCashPre < cashThreshold && iraNonCashPre > 0.0) {
-            val toMove = min(iraNonCashPre, cashThreshold - iraCashPre)
-            iraCashPre += toMove
-            iraNonCashPre -= toMove
+        val isRoiPositive = investReturnPct >= 0.0
+        
+        // Rebalance IRA Cash
+        if (isRoiPositive) {
+            val targetCash = min(iraCashPre + iraNonCashPre, cashThreshold)
+            val shift = targetCash - iraCashPre
+            iraCashPre += shift
+            iraNonCashPre -= shift
+        } else {
+            if (iraCashPre < cashThreshold && iraNonCashPre > 0.0) {
+                val toMove = min(iraNonCashPre, cashThreshold - iraCashPre)
+                iraCashPre += toMove
+                iraNonCashPre -= toMove
+            }
         }
-        if (rothCashPre < cashThreshold && rothNonCashPre > 0.0) {
-            val toMove = min(rothNonCashPre, cashThreshold - rothCashPre)
-            rothCashPre += toMove
-            rothNonCashPre -= toMove
+        
+        // Rebalance Roth Cash
+        if (isRoiPositive) {
+            val targetCash = min(rothCashPre + rothNonCashPre, cashThreshold)
+            val shift = targetCash - rothCashPre
+            rothCashPre += shift
+            rothNonCashPre -= shift
+        } else {
+            if (rothCashPre < cashThreshold && rothNonCashPre > 0.0) {
+                val toMove = min(rothNonCashPre, cashThreshold - rothCashPre)
+                rothCashPre += toMove
+                rothNonCashPre -= toMove
+            }
         }
-        if (taxableCashPre < cashThreshold && taxableNonCashPre > 0.0) {
-            val toMove = min(taxableNonCashPre, cashThreshold - taxableCashPre)
-            taxableCashPre += toMove
-            taxableNonCashPre -= toMove
+        
+        // Rebalance Taxable Cash
+        if (isRoiPositive) {
+            val targetCash = min(taxableCashPre + taxableNonCashPre, cashThreshold)
+            val shift = targetCash - taxableCashPre
+            taxableCashPre += shift
+            taxableNonCashPre -= shift
+        } else {
+            if (taxableCashPre < cashThreshold && taxableNonCashPre > 0.0) {
+                val toMove = min(taxableNonCashPre, cashThreshold - taxableCashPre)
+                taxableCashPre += toMove
+                taxableNonCashPre -= toMove
+            }
         }
         
         val maxIra = max(0.0, iraCashPre + iraNonCashPre)
