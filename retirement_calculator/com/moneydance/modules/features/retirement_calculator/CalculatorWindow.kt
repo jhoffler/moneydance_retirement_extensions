@@ -26,7 +26,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "salary", "salary_spouse", "ss_pia", "ss_pia_spouse", "pension_early", "pension_late", 
         "pension_early_spouse", "pension_late_spouse", "start_other_spending", "prop_taxes", 
         "fed_std_deduction", "state_std_deduction", "mortgage", "travel", "eldercare", "daf_distro",
-        "start_ira_savings", "start_roth_savings", "start_other_savings", "start_taxable_cost_basis", "start_daf_savings"
+        "start_ira_savings", "start_ira_cash", "start_roth_savings", "start_roth_cash", "start_other_savings", "start_other_cash", "start_taxable_cost_basis", "start_daf_savings"
     )
     private val textFields = mutableMapOf<String, JTextField>()
     private val checkboxes = mutableMapOf<String, JCheckBox>()
@@ -84,8 +84,11 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "daf_distro" to "0",
         "daf_excess_pct" to "50",
         "start_ira_savings" to "1000000",
+        "start_ira_cash" to "100000",
         "start_roth_savings" to "1000000",
+        "start_roth_cash" to "100000",
         "start_other_savings" to "1000000",
+        "start_other_cash" to "100000",
         "start_taxable_cost_basis" to "",
         "start_daf_savings" to "0",
         "stack_incomes" to "true",
@@ -396,10 +399,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     }
 
     private fun createSavingsPanel(): JScrollPane {
-        val p = createGridPanel(5, 2)
+        val p = createGridPanel(8, 2)
         addFieldRow(p, "IRA Savings:", "start_ira_savings")
+        addFieldRow(p, "  IRA Cash Portion:", "start_ira_cash")
         addFieldRow(p, "Roth Savings:", "start_roth_savings")
+        addFieldRow(p, "  Roth Cash Portion:", "start_roth_cash")
         addFieldRow(p, "Other Savings (Brokerage):", "start_other_savings")
+        addFieldRow(p, "  Other Cash Portion:", "start_other_cash")
         addFieldRow(p, "Taxable Cost Basis:", "start_taxable_cost_basis")
         addFieldRow(p, "DAF Savings:", "start_daf_savings")
         
@@ -677,16 +683,34 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                         return sum
                     }
 
+                    fun sumCash(grp: List<com.infinitekind.moneydance.model.Account>): Long {
+                        var sum = 0L
+                        for (acct in grp) {
+                            if (acct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.INVESTMENT) {
+                                sum += com.infinitekind.moneydance.model.AccountUtil.getBalanceAsOfDate(mdBook, acct, dateInt)
+                            } else {
+                                sum += getRecursiveBalanceAsOfDate(mdBook, acct, dateInt)
+                            }
+                        }
+                        return sum
+                    }
+
                     val iraBal = sumAccounts(divider.iras)
+                    val iraCash = sumCash(divider.iras)
                     val rothBal = sumAccounts(divider.roths)
+                    val rothCash = sumCash(divider.roths)
                     val otherBal = sumAccounts(divider.taxables)
+                    val otherCash = sumCash(divider.taxables)
                     val otherBasis = sumBasis(divider.taxables)
                     val dafBal = sumAccounts(dafAccounts)
 
                     SwingUtilities.invokeLater {
                         textFields["start_ira_savings"]?.text = formatDollar(iraBal / 100.0)
+                        textFields["start_ira_cash"]?.text = formatDollar(iraCash / 100.0)
                         textFields["start_roth_savings"]?.text = formatDollar(rothBal / 100.0)
+                        textFields["start_roth_cash"]?.text = formatDollar(rothCash / 100.0)
                         textFields["start_other_savings"]?.text = formatDollar(otherBal / 100.0)
+                        textFields["start_other_cash"]?.text = formatDollar(otherCash / 100.0)
                         textFields["start_taxable_cost_basis"]?.text = formatDollar(otherBasis / 100.0)
                         textFields["start_daf_savings"]?.text = formatDollar(dafBal / 100.0)
                         
@@ -1110,24 +1134,28 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
             }
             isSavingsCol -> {
                 val iraBal = fmt(rowData["ira_savings"])
+                val iraCashVal = fmt(rowData["ira_cash"])
                 val iraRoi = fmt(rowData["ira_roi"])
                 val iraDist = fmt(rowData["ira_distro"])
                 val iraNetVal = ((rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0)
                 val iraNet = DecimalFormat("$#,##0.00").format(iraNetVal)
                 
                 val rothBal = fmt(rowData["roth_savings"])
+                val rothCashVal = fmt(rowData["roth_cash"])
                 val rothRoi = fmt(rowData["roth_roi"])
                 val rothDist = fmt(rowData["roth_distro"])
                 val rothNetVal = ((rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["roth_distro"] as? Number)?.toDouble() ?: 0.0)
                 val rothNet = DecimalFormat("$#,##0.00").format(rothNetVal)
                 
                 val otherBal = fmt(rowData["other_savings"])
+                val otherCashVal = fmt(rowData["other_cash"])
                 val otherRoi = fmt(rowData["other_roi"])
                 val otherDist = fmt(rowData["other_distro"])
                 val otherNetVal = ((rowData["other_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["other_distro"] as? Number)?.toDouble() ?: 0.0)
                 val otherNet = DecimalFormat("$#,##0.00").format(otherNetVal)
                 
                 val dafBal = fmt(rowData["daf_savings"])
+                val dafCashVal = "$0.00"
                 val dafRoi = fmt(rowData["daf_roi"])
                 val dafDist = fmt(rowData["daf_distro"])
                 val dafContrib = (rowData["daf_contrib"] as? Number)?.toDouble() ?: 0.0
@@ -1135,6 +1163,11 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                 val dafNet = DecimalFormat("$#,##0.00").format(dafNetVal)
                 
                 val totBal = fmt(rowData["savings"])
+                val totCashVal = fmt(
+                    ((rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0) +
+                    ((rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0) +
+                    ((rowData["other_cash"] as? Number)?.toDouble() ?: 0.0)
+                )
                 val totRoi = fmt(rowData["roi"])
                 val totDist = fmt(rowData["distro"])
                 val totNetVal = ((rowData["roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["distro"] as? Number)?.toDouble() ?: 0.0)
@@ -1142,12 +1175,12 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                 
                 cell.toolTipText = """<html>
                     <table border='0' cellpadding='2' cellspacing='3'>
-                    <tr><th></th><th align='right'>Balance</th><th align='right'>ROI</th><th align='right'>Distribution</th><th align='right'>Net</th></tr>
-                    <tr><td><b>IRA:</b></td><td align='right'>$iraBal</td><td align='right'>$iraRoi</td><td align='right'>$iraDist</td><td align='right'>$iraNet</td></tr>
-                    <tr><td><b>Roth:</b></td><td align='right'>$rothBal</td><td align='right'>$rothRoi</td><td align='right'>$rothDist</td><td align='right'>$rothNet</td></tr>
-                    <tr><td><b>Other:</b></td><td align='right'>$otherBal</td><td align='right'>$otherRoi</td><td align='right'>$otherDist</td><td align='right'>$otherNet</td></tr>
-                    <tr><td><b>DAF:</b></td><td align='right'>$dafBal</td><td align='right'>$dafRoi</td><td align='right'>$dafDist</td><td align='right'>$dafNet</td></tr>
-                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>$totBal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totRoi</b></td><td style='border-top: 1px solid black;' align='right'><b>$totDist</b></td><td style='border-top: 1px solid black;' align='right'><b>$totNet</b></td></tr>
+                    <tr><th></th><th align='right'>Total Balance</th><th align='right'>Cash Balance</th><th align='right'>ROI</th><th align='right'>Distribution</th><th align='right'>Net</th></tr>
+                    <tr><td><b>IRA:</b></td><td align='right'>$iraBal</td><td align='right'>$iraCashVal</td><td align='right'>$iraRoi</td><td align='right'>$iraDist</td><td align='right'>$iraNet</td></tr>
+                    <tr><td><b>Roth:</b></td><td align='right'>$rothBal</td><td align='right'>$rothCashVal</td><td align='right'>$rothRoi</td><td align='right'>$rothDist</td><td align='right'>$rothNet</td></tr>
+                    <tr><td><b>Other:</b></td><td align='right'>$otherBal</td><td align='right'>$otherCashVal</td><td align='right'>$otherRoi</td><td align='right'>$otherDist</td><td align='right'>$otherNet</td></tr>
+                    <tr><td><b>DAF:</b></td><td align='right'>$dafBal</td><td align='right'>$dafCashVal</td><td align='right'>$dafRoi</td><td align='right'>$dafDist</td><td align='right'>$dafNet</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>$totBal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totCashVal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totRoi</b></td><td style='border-top: 1px solid black;' align='right'><b>$totDist</b></td><td style='border-top: 1px solid black;' align='right'><b>$totNet</b></td></tr>
                     </table>
                     </html>""".trimIndent()
             }

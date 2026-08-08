@@ -38,6 +38,7 @@ val SS_BRACKETS = listOf(
 const val STD_DEDUCTION = 32200.0
 const val OBBBA_DEDUCTION = 12000.0
 const val DIVIDEND_RATE = 0.01
+const val INTEREST_RATE = 0.03
 const val MAJOR_GUARDRAIL_VIOLATION = 0.2
 const val YOUNG_PENSION_AGE = 60.0
 const val OLD_PENSION_AGE = 70.0
@@ -138,6 +139,19 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var taxableSavings: Double = 0.0
     var taxableCostBasis: Double = 0.0
     var dafSavings: Double = 0.0
+
+    var iraCash: Double = 0.0
+    var rothCash: Double = 0.0
+    var taxableCash: Double = 0.0
+
+    var iraSavingsEnd: Double = 0.0
+    var iraCashEnd: Double = 0.0
+    var rothSavingsEnd: Double = 0.0
+    var rothCashEnd: Double = 0.0
+    var taxableSavingsEnd: Double = 0.0
+    var taxableCashEnd: Double = 0.0
+    var taxableCostBasisEnd: Double = 0.0
+    var dafSavingsEnd: Double = 0.0
 
     var iraDistribution: Double = 0.0
     var rothDistribution: Double = 0.0
@@ -248,23 +262,23 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             }
             dafSavings = formData.getDouble("start_daf_savings", 0.0)
             dafDistribution = formData.getDouble("daf_distro", 0.0)
+            
+            iraCash = formData.getDouble("start_ira_cash", iraSavings * 0.10)
+            rothCash = formData.getDouble("start_roth_cash", rothSavings * 0.10)
+            taxableCash = formData.getDouble("start_other_cash", taxableSavings * 0.10)
+            
+            iraCash = max(0.0, min(iraSavings, iraCash))
+            rothCash = max(0.0, min(rothSavings, rothCash))
+            taxableCash = max(0.0, min(taxableSavings, taxableCash))
         } else {
-            iraSavings = previousYear.iraSavings * (1.0 + previousYear.investReturnPct) - previousYear.iraDistribution
-            rothSavings = previousYear.rothSavings * (1.0 + previousYear.investReturnPct) - previousYear.rothDistribution
-            taxableSavings = previousYear.taxableSavings * (1.0 + previousYear.investReturnPct) - previousYear.taxableDistribution
-            
-            val prevCurrentTaxable = previousYear.taxableSavings * (1.0 + previousYear.investReturnPct)
-            val prevBasisRatio = if (prevCurrentTaxable > 0.0) previousYear.taxableCostBasis / prevCurrentTaxable else 0.0
-            
-            if (previousYear.taxableDistribution > 0.0) {
-                taxableCostBasis = previousYear.taxableCostBasis - (previousYear.taxableDistribution * prevBasisRatio)
-            } else if (previousYear.taxableDistribution < 0.0) {
-                taxableCostBasis = previousYear.taxableCostBasis + Math.abs(previousYear.taxableDistribution)
-            } else {
-                taxableCostBasis = previousYear.taxableCostBasis
-            }
-            taxableCostBasis = max(0.0, min(taxableCostBasis, taxableSavings))
-            dafSavings = previousYear.dafSavings * (1.0 + previousYear.investReturnPct) - previousYear.dafDistribution + previousYear.dafContribution
+            iraSavings = previousYear.iraSavingsEnd
+            iraCash = previousYear.iraCashEnd
+            rothSavings = previousYear.rothSavingsEnd
+            rothCash = previousYear.rothCashEnd
+            taxableSavings = previousYear.taxableSavingsEnd
+            taxableCash = previousYear.taxableCashEnd
+            taxableCostBasis = previousYear.taxableCostBasisEnd
+            dafSavings = previousYear.dafSavingsEnd
             dafDistribution = previousYear.dafDistribution * (1.0 + previousYear.inflationPct)
         }
 
@@ -328,8 +342,15 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
         pensionSelf = calcBasePensionIncome(true)
         pensionSpouse = calcBasePensionIncome(false)
-        dividends = taxableSavings * DIVIDEND_RATE
-        interest = dividends * 0.1
+        val iraInterest = iraCash * INTEREST_RATE
+        val rothInterest = rothCash * INTEREST_RATE
+        val taxableInterest = taxableCash * INTEREST_RATE
+        interest = iraInterest + rothInterest + taxableInterest
+
+        val iraNonCash = max(0.0, iraSavings - iraCash)
+        val rothNonCash = max(0.0, rothSavings - rothCash)
+        val taxableNonCash = max(0.0, taxableSavings - taxableCash)
+        dividends = (iraNonCash * DIVIDEND_RATE) + (rothNonCash * DIVIDEND_RATE) + (taxableNonCash * DIVIDEND_RATE)
     }
 
     private fun calculateSpousalTopUp(primaryPia: Double, secondaryPia: Double, secondaryBenefit: Double, birthDate: LocalDate, startDate: LocalDate): Double {
@@ -416,16 +437,64 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     private fun optimizeWithdrawalsForNetCash() {
         val targetNetCash = mortgage + elderCare + otherExpenses + travel
-        val maxIra = max(0.0, iraSavings * (1.0 + investReturnPct))
-        val maxTaxable = max(0.0, taxableSavings * (1.0 + investReturnPct))
-        val maxRoth = max(0.0, rothSavings * (1.0 + investReturnPct))
-
-        val rmdValue = min(suggestRmd(), maxIra)
+        
+        val iraInterest = iraCash * INTEREST_RATE
+        val rothInterest = rothCash * INTEREST_RATE
+        val taxableInterest = taxableCash * INTEREST_RATE
+        
+        val iraNonCash = max(0.0, iraSavings - iraCash)
+        val rothNonCash = max(0.0, rothSavings - rothCash)
+        val taxableNonCash = max(0.0, taxableSavings - taxableCash)
+        
+        val iraDividends = iraNonCash * DIVIDEND_RATE
+        val rothDividends = rothNonCash * DIVIDEND_RATE
+        val taxableDividends = taxableNonCash * DIVIDEND_RATE
+        
+        val iraRoi = iraNonCash * investReturnPct
+        val rothRoi = rothNonCash * investReturnPct
+        val taxableRoi = taxableNonCash * investReturnPct
+        
+        var iraCashPre = iraCash + iraInterest + iraDividends
+        var iraNonCashPre = max(0.0, iraNonCash + iraRoi)
+        
+        var rothCashPre = rothCash + rothInterest + rothDividends
+        var rothNonCashPre = max(0.0, rothNonCash + rothRoi)
+        
+        var taxableCashPre = taxableCash + taxableInterest + taxableDividends
+        var taxableNonCashPre = max(0.0, taxableNonCash + taxableRoi)
+        
+        // Increase taxable cost basis by interest and dividends
+        taxableCostBasis = min(taxableSavings + taxableInterest + taxableDividends + taxableRoi, taxableCostBasis + taxableInterest + taxableDividends)
+        
+        val maxTaxable = max(0.0, taxableCashPre + taxableNonCashPre)
         val costBasisRatio = if (maxTaxable > 0.0) taxableCostBasis / maxTaxable else 0.0
-
+        
         val estimatedGrossNeeded = targetNetCash + payrollTaxes + propertyTaxes + 5000.0
+        val cashThreshold = max(0.0, estimatedGrossNeeded - piaSelf - piaSpouse)
+        
+        // Refill Cash from Non-Cash if below threshold
+        if (iraCashPre < cashThreshold && iraNonCashPre > 0.0) {
+            val toMove = min(iraNonCashPre, cashThreshold - iraCashPre)
+            iraCashPre += toMove
+            iraNonCashPre -= toMove
+        }
+        if (rothCashPre < cashThreshold && rothNonCashPre > 0.0) {
+            val toMove = min(rothNonCashPre, cashThreshold - rothCashPre)
+            rothCashPre += toMove
+            rothNonCashPre -= toMove
+        }
+        if (taxableCashPre < cashThreshold && taxableNonCashPre > 0.0) {
+            val toMove = min(taxableNonCashPre, cashThreshold - taxableCashPre)
+            taxableCashPre += toMove
+            taxableNonCashPre -= toMove
+        }
+        
+        val maxIra = max(0.0, iraCashPre + iraNonCashPre)
+        val maxRoth = max(0.0, rothCashPre + rothNonCashPre)
+        
+        val rmdValue = min(suggestRmd(), maxIra)
         val fixedCash = getOtherIncome() + socSecSelf + socSecSpouse
-
+        
         var currentIRA = rmdValue
         var currentBrokerageSale = max(0.0, estimatedGrossNeeded - rmdValue - fixedCash)
         currentBrokerageSale = min(currentBrokerageSale, maxTaxable)
@@ -552,6 +621,60 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         if (surplus > 0.0) {
             fundSavings(surplus)
         }
+        
+        calculateEndingBalances(
+            iraCashPre, iraNonCashPre,
+            rothCashPre, rothNonCashPre,
+            taxableCashPre, taxableNonCashPre
+        )
+    }
+
+    private fun calculateEndingBalances(
+        iraCashPre: Double, iraNonCashPre: Double,
+        rothCashPre: Double, rothNonCashPre: Double,
+        taxableCashPre: Double, taxableNonCashPre: Double
+    ) {
+        fun applyDist(cashPre: Double, nonCashPre: Double, dist: Double): Pair<Double, Double> {
+            if (dist > 0.0) {
+                return if (investReturnPct < 0.0) {
+                    val cashDep = min(cashPre, dist)
+                    val nonCashDep = dist - cashDep
+                    Pair(max(0.0, cashPre - cashDep), max(0.0, nonCashPre - nonCashDep))
+                } else {
+                    val nonCashDep = min(nonCashPre, dist)
+                    val cashDep = dist - nonCashDep
+                    Pair(max(0.0, cashPre - cashDep), max(0.0, nonCashPre - nonCashDep))
+                }
+            } else {
+                return Pair(cashPre, nonCashPre - dist)
+            }
+        }
+        
+        val (iraC, iraN) = applyDist(iraCashPre, iraNonCashPre, iraDistribution)
+        iraCashEnd = iraC
+        iraSavingsEnd = iraC + iraN
+        
+        val (rothC, rothN) = applyDist(rothCashPre, rothNonCashPre, rothDistribution)
+        rothCashEnd = rothC
+        rothSavingsEnd = rothC + rothN
+        
+        val (taxC, taxN) = applyDist(taxableCashPre, taxableNonCashPre, taxableDistribution)
+        taxableCashEnd = taxC
+        taxableSavingsEnd = taxC + taxN
+        
+        val maxTaxable = taxableCashPre + taxableNonCashPre
+        val prevBasisRatio = if (maxTaxable > 0.0) taxableCostBasis / maxTaxable else 0.0
+        
+        if (taxableDistribution > 0.0) {
+            taxableCostBasisEnd = taxableCostBasis - (taxableDistribution * prevBasisRatio)
+        } else if (taxableDistribution < 0.0) {
+            taxableCostBasisEnd = taxableCostBasis - taxableDistribution
+        } else {
+            taxableCostBasisEnd = taxableCostBasis
+        }
+        taxableCostBasisEnd = max(0.0, min(taxableCostBasisEnd, taxableSavingsEnd))
+        
+        dafSavingsEnd = dafSavings * (1.0 + investReturnPct) - dafDistribution + dafContribution
     }
 
     fun getOrdinaryIncome(): Double {
@@ -903,16 +1026,28 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["housing"] = mortgage
         result["eldercare"] = elderCare
         result["travel_eldercare"] = travel + elderCare
+        val iraNonCash = max(0.0, iraSavings - iraCash)
+        val rothNonCash = max(0.0, rothSavings - rothCash)
+        val taxableNonCash = max(0.0, taxableSavings - taxableCash)
+        val iraRoi = iraNonCash * investReturnPct
+        val rothRoi = rothNonCash * investReturnPct
+        val taxableRoi = taxableNonCash * investReturnPct
+        val dafRoi = dafSavings * investReturnPct
+        val totalRoi = iraRoi + rothRoi + taxableRoi + dafRoi
+
         result["ira_savings"] = iraSavings
+        result["ira_cash"] = iraCash
         result["roth_savings"] = rothSavings
+        result["roth_cash"] = rothCash
         result["other_savings"] = taxableSavings
+        result["other_cash"] = taxableCash
         result["roi_pct"] = investReturnPct
-        result["roi"] = getTotalSavings() * investReturnPct
-        result["ira_roi"] = iraSavings * investReturnPct
-        result["roth_roi"] = rothSavings * investReturnPct
-        result["other_roi"] = taxableSavings * investReturnPct
+        result["roi"] = totalRoi
+        result["ira_roi"] = iraRoi
+        result["roth_roi"] = rothRoi
+        result["other_roi"] = taxableRoi
         result["daf_savings"] = dafSavings
-        result["daf_roi"] = dafSavings * investReturnPct
+        result["daf_roi"] = dafRoi
         result["distro"] = iraDistribution + rothDistribution + taxableDistribution
         result["ira_distro"] = iraDistribution
         result["roth_distro"] = rothDistribution
@@ -921,9 +1056,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["daf_contrib"] = dafContribution
         result["rmd"] = suggestRmd()
         result["tax_limit_reason"] = taxLimitReason ?: ""
-        result["invest"] = (iraSavings * investReturnPct - iraDistribution) +
-                (rothSavings * investReturnPct - rothDistribution) +
-                (taxableSavings * investReturnPct - taxableDistribution)
+        result["invest"] = (iraSavingsEnd + rothSavingsEnd + taxableSavingsEnd) - (iraSavings + rothSavings + taxableSavings)
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
         return result
