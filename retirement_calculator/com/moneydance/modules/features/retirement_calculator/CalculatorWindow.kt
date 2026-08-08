@@ -991,6 +991,16 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
 // Table cell highlighting cell renderer
 class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : DefaultTableCellRenderer() {
+    
+    private fun fmt(value: Any?): String {
+        val d = when (value) {
+            is Number -> value.toDouble()
+            is String -> value.replace("$", "").replace(",", "").toDoubleOrNull() ?: 0.0
+            else -> 0.0
+        }
+        return DecimalFormat("$#,##0.00").format(d)
+    }
+
     override fun getTableCellRendererComponent(
         table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int
     ): Component {
@@ -1039,7 +1049,6 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         // Compare with previous row for orange drop alerts
         if (row > 0 && row - 1 < tableData.size) {
             val prevRow = tableData[row - 1]
-            // Map column name back to lowercase key
             val key = colName.lowercase().replace(" ", "_").replace("%", "pct").replace("&", "").replace("__", "_")
             val rawPrev = prevRow[key]
             val prevVal = when (rawPrev) {
@@ -1057,6 +1066,129 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
             }
         }
         
+        // Tooltip formatting
+        val isSavingsCol = colName in setOf(
+            "Savings", "Taxable Basis", "ROI", "Distrib", "IRA Distro", "Roth Distro", "Other Distro"
+        )
+        
+        when {
+            colName == "Year" -> {
+                val msg = rowData["guardrail_msg"] as? String ?: ""
+                cell.toolTipText = if (msg.isNotEmpty()) msg else null
+            }
+            colName == "Salary" -> {
+                val salSelf = fmt(rowData["salarySelf"])
+                val salSpouse = fmt(rowData["salarySpouse"])
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='1' cellspacing='5'>
+                    <tr><td><b>Self:</b></td><td align='right'>$salSelf</td></tr>
+                    <tr><td><b>Spouse:</b></td><td align='right'>$salSpouse</td></tr>
+                    </table>
+                    </html>""".trimIndent()
+            }
+            colName == "SS/Pension" -> {
+                val ssSelfVal = (rowData["socsecSelf"] as? Number)?.toDouble() ?: 0.0
+                val ssSpouseVal = (rowData["socsecSpouse"] as? Number)?.toDouble() ?: 0.0
+                val ssTotVal = (rowData["socsec"] as? Number)?.toDouble() ?: 0.0
+                
+                val penSelfVal = (rowData["pensionSelf"] as? Number)?.toDouble() ?: 0.0
+                val penSpouseVal = (rowData["pensionSpouse"] as? Number)?.toDouble() ?: 0.0
+                val penTotVal = (rowData["pension"] as? Number)?.toDouble() ?: 0.0
+                
+                val totSelfVal = ssSelfVal + penSelfVal
+                val totSpouseVal = ssSpouseVal + penSpouseVal
+                val totTotVal = (rowData["ss"] as? Number)?.toDouble() ?: 0.0
+                
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='1' cellspacing='5'>
+                    <tr><th></th><th align='right'>Self</th><th align='right'>Spouse</th><th align='right'>Total</th></tr>
+                    <tr><td><b>Social Security:</b></td><td align='right'>${fmt(ssSelfVal)}</td><td align='right'>${fmt(ssSpouseVal)}</td><td align='right'>${fmt(ssTotVal)}</td></tr>
+                    <tr><td><b>Pension:</b></td><td align='right'>${fmt(penSelfVal)}</td><td align='right'>${fmt(penSpouseVal)}</td><td align='right'>${fmt(penTotVal)}</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totSelfVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totSpouseVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totTotVal)}</b></td></tr>
+                    </table>
+                    </html>""".trimIndent()
+            }
+            isSavingsCol -> {
+                val iraBal = fmt(rowData["ira_savings"])
+                val iraRoi = fmt(rowData["ira_roi"])
+                val iraDist = fmt(rowData["ira_distro"])
+                val iraNetVal = ((rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0)
+                val iraNet = DecimalFormat("$#,##0.00").format(iraNetVal)
+                
+                val rothBal = fmt(rowData["roth_savings"])
+                val rothRoi = fmt(rowData["roth_roi"])
+                val rothDist = fmt(rowData["roth_distro"])
+                val rothNetVal = ((rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["roth_distro"] as? Number)?.toDouble() ?: 0.0)
+                val rothNet = DecimalFormat("$#,##0.00").format(rothNetVal)
+                
+                val otherBal = fmt(rowData["other_savings"])
+                val otherRoi = fmt(rowData["other_roi"])
+                val otherDist = fmt(rowData["other_distro"])
+                val otherNetVal = ((rowData["other_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["other_distro"] as? Number)?.toDouble() ?: 0.0)
+                val otherNet = DecimalFormat("$#,##0.00").format(otherNetVal)
+                
+                val dafBal = fmt(rowData["daf_savings"])
+                val dafRoi = fmt(rowData["daf_roi"])
+                val dafDist = fmt(rowData["daf_distro"])
+                val dafContrib = (rowData["daf_contrib"] as? Number)?.toDouble() ?: 0.0
+                val dafNetVal = ((rowData["daf_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["daf_distro"] as? Number)?.toDouble() ?: 0.0) + dafContrib
+                val dafNet = DecimalFormat("$#,##0.00").format(dafNetVal)
+                
+                val totBal = fmt(rowData["savings"])
+                val totRoi = fmt(rowData["roi"])
+                val totDist = fmt(rowData["distro"])
+                val totNetVal = ((rowData["roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["distro"] as? Number)?.toDouble() ?: 0.0)
+                val totNet = DecimalFormat("$#,##0.00").format(totNetVal)
+                
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='2' cellspacing='3'>
+                    <tr><th></th><th align='right'>Balance</th><th align='right'>ROI</th><th align='right'>Distribution</th><th align='right'>Net</th></tr>
+                    <tr><td><b>IRA:</b></td><td align='right'>$iraBal</td><td align='right'>$iraRoi</td><td align='right'>$iraDist</td><td align='right'>$iraNet</td></tr>
+                    <tr><td><b>Roth:</b></td><td align='right'>$rothBal</td><td align='right'>$rothRoi</td><td align='right'>$rothDist</td><td align='right'>$rothNet</td></tr>
+                    <tr><td><b>Other:</b></td><td align='right'>$otherBal</td><td align='right'>$otherRoi</td><td align='right'>$otherDist</td><td align='right'>$otherNet</td></tr>
+                    <tr><td><b>DAF:</b></td><td align='right'>$dafBal</td><td align='right'>$dafRoi</td><td align='right'>$dafDist</td><td align='right'>$dafNet</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>$totBal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totRoi</b></td><td style='border-top: 1px solid black;' align='right'><b>$totDist</b></td><td style='border-top: 1px solid black;' align='right'><b>$totNet</b></td></tr>
+                    </table>
+                    </html>""".trimIndent()
+            }
+            colName == "Taxes" -> {
+                val fedtax = fmt(rowData["fed_income_tax"])
+                val statetax = fmt(rowData["state_income_tax"])
+                val payrolltax = fmt(rowData["payroll_tax"])
+                val proptax = fmt(rowData["property_tax"])
+                
+                val limitReason = rowData["tax_limit_reason"] as? String ?: ""
+                val limitHtml = if (limitReason.isNotEmpty()) {
+                    "<tr><td colspan='2' style='border-top: 1px solid gray; padding-top: 4px;'><b>IRA Limited By:</b> $limitReason</td></tr>"
+                } else ""
+                
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='1' cellspacing='5'>
+                    <tr><td><b>Federal:</b></td><td align='right'>$fedtax</td></tr>
+                    <tr><td><b>Payroll:</b></td><td align='right'>$payrolltax</td></tr>
+                    <tr><td><b>State:</b></td><td align='right'>$statetax</td></tr>
+                    <tr><td><b>Property:</b></td><td align='right'>$proptax</td></tr>
+                    $limitHtml
+                    </table>
+                    </html>""".trimIndent()
+            }
+            colName == "Travel & Eldercare" -> {
+                val travel = fmt(rowData["travel"])
+                val eldercare = fmt(rowData["eldercare"])
+                val total = fmt(rowData["travel_eldercare"])
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='1' cellspacing='5'>
+                    <tr><td><b>Travel:</b></td><td align='right'>$travel</td></tr>
+                    <tr><td><b>Elder Care:</b></td><td align='right'>$eldercare</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>$total</b></td></tr>
+                    </table>
+                    </html>""".trimIndent()
+            }
+            else -> {
+                cell.toolTipText = null
+            }
+        }
+
         // Alignment formatting
         if (colName == "Year" || colName.contains("Age")) {
             cell.horizontalAlignment = SwingConstants.CENTER
