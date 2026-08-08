@@ -737,7 +737,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         calculateEndingBalances(
             iraCashPre, iraNonCashPre,
             rothCashPre, rothNonCashPre,
-            taxableCashPre, taxableNonCashPre
+            taxableCashPre, taxableNonCashPre,
+            taxCS
         )
     }
 
@@ -768,7 +769,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     private fun calculateEndingBalances(
         iraCashPre: Double, iraNonCashPre: Double,
         rothCashPre: Double, rothNonCashPre: Double,
-        taxableCashPre: Double, taxableNonCashPre: Double
+        taxableCashPre: Double, taxableNonCashPre: Double,
+        taxCS: Double
     ) {
         fun applyDist(cashPre: Double, nonCashPre: Double, dist: Double): Pair<Double, Double> {
             if (dist > 0.0) {
@@ -825,10 +827,34 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         
         val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
-        val prevStock = max(0.0, taxableSavings - taxableCash)
-        val prevStockWithRoi = prevStock * (1.0 + investReturnPct)
         
-        // 1. DAF Donation (most appreciated / lowest ratio first)
+        // 1. Rebalancing stock transaction (start-of-year)
+        val rebalBuy = taxableCash - taxCS
+        val rebalBuyWithRoi = rebalBuy * (1.0 + investReturnPct)
+        if (rebalBuy > 0.01) {
+            val lotName = "Stock purchased in $year"
+            actionLogs.add("Purchase \$${String.format("%,.2f", rebalBuy)} of stock named '$lotName' to reinvest cash.")
+            activeLots.add(StockLot(name = lotName, costBasis = rebalBuyWithRoi, currentVal = rebalBuyWithRoi))
+        } else if (rebalBuy < -0.01) {
+            val rebalSellWithRoi = -rebalBuyWithRoi
+            activeLots.sortByDescending { it.basisRatio }
+            var remainingSale = rebalSellWithRoi
+            for (lot in activeLots) {
+                if (remainingSale <= 0.0) break
+                val toDeplete = min(lot.currentVal, remainingSale)
+                val realizedBasis = toDeplete * lot.basisRatio
+                val gain = toDeplete - realizedBasis
+                
+                val scale = 1.0 + investReturnPct
+                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete / scale)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis / scale)}, realized gain: \$${String.format("%,.2f", gain / scale)}) to manage cash.")
+                
+                lot.costBasis -= realizedBasis
+                lot.currentVal -= toDeplete
+                remainingSale -= toDeplete
+            }
+        }
+        
+        // 2. DAF Donation (most appreciated / lowest ratio first)
         if (dafContribution > 0.0) {
             activeLots.sortBy { it.basisRatio }
             var remainingDaf = dafContribution
@@ -845,31 +871,24 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             }
         }
         
-        // 2. Net change (excluding DAF)
-        val change = taxN + dafContribution - prevStockWithRoi
-        if (change < 0.0) {
-            val stockSold = -change
+        // 3. Taxable distribution (spending) stock sale
+        val taxableCashWithdrawn = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
+        val taxableStockWithdrawn = taxableDistribution - taxableCashWithdrawn
+        if (taxableStockWithdrawn > 0.01) {
             activeLots.sortByDescending { it.basisRatio }
-            var remainingSale = stockSold
+            var remainingSale = taxableStockWithdrawn
             for (lot in activeLots) {
                 if (remainingSale <= 0.0) break
                 val toDeplete = min(lot.currentVal, remainingSale)
                 val realizedBasis = toDeplete * lot.basisRatio
                 val gain = toDeplete - realizedBasis
                 
-                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: \$${String.format("%,.2f", gain)}) to cover spending or manage cash.")
+                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: \$${String.format("%,.2f", gain)}) to cover spending.")
                 
                 lot.costBasis -= realizedBasis
                 lot.currentVal -= toDeplete
                 remainingSale -= toDeplete
             }
-        } else if (change > 0.0) {
-            val stockBought = change
-            val lotName = "Stock purchased in $year"
-            
-            actionLogs.add("Purchase \$${String.format("%,.2f", stockBought)} of stock named '$lotName' to reinvest cash.")
-            
-            activeLots.add(StockLot(name = lotName, costBasis = stockBought, currentVal = stockBought))
         }
         
         taxableLotsEnd = activeLots.filter { it.currentVal > 0.01 }.toMutableList()
