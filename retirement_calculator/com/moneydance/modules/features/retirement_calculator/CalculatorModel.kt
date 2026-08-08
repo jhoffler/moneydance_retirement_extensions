@@ -481,7 +481,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         
         // Rebalance IRA Cash
         if (isRoiPositive) {
-            val targetCash = min(iraCashPre + iraNonCashPre, cashThreshold)
+            val totalVal = iraCashPre + iraNonCashPre
+            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
             val shift = targetCash - iraCashPre
             iraCashPre += shift
             iraNonCashPre -= shift
@@ -495,7 +496,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         
         // Rebalance Roth Cash
         if (isRoiPositive) {
-            val targetCash = min(rothCashPre + rothNonCashPre, cashThreshold)
+            val totalVal = rothCashPre + rothNonCashPre
+            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
             val shift = targetCash - rothCashPre
             rothCashPre += shift
             rothNonCashPre -= shift
@@ -509,7 +511,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         
         // Rebalance Taxable Cash
         if (isRoiPositive) {
-            val targetCash = min(taxableCashPre + taxableNonCashPre, cashThreshold)
+            val totalVal = taxableCashPre + taxableNonCashPre
+            val targetCash = min(totalVal, max(cashThreshold, totalVal * 0.05))
             val shift = targetCash - taxableCashPre
             taxableCashPre += shift
             taxableNonCashPre -= shift
