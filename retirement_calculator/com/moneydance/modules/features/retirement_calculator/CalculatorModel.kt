@@ -470,7 +470,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val costBasisRatio = if (maxTaxable > 0.0) taxableCostBasis / maxTaxable else 0.0
         
         val estimatedGrossNeeded = targetNetCash + payrollTaxes + propertyTaxes + 5000.0
-        val cashThreshold = max(0.0, estimatedGrossNeeded - piaSelf - piaSpouse)
+        val ssSelfPotential = calcPotentialSocSec(true)
+        val ssSpousePotential = calcPotentialSocSec(false)
+        val pensionSelfPotential = calcPotentialPension(true)
+        val pensionSpousePotential = calcPotentialPension(false)
+        
+        val cashThreshold = max(0.0, estimatedGrossNeeded - ssSelfPotential - ssSpousePotential - pensionSelfPotential - pensionSpousePotential)
         
         // Refill Cash from Non-Cash if below threshold
         if (iraCashPre < cashThreshold && iraNonCashPre > 0.0) {
@@ -946,6 +951,58 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             cur = cur.previousYear!!
         }
         return cur
+    }
+
+    private fun calcPotentialSocSec(isSelf: Boolean): Double {
+        val startAge: Double
+        val pia: Double
+        if (isSelf) {
+            startAge = socSecStartAgeSelf
+            pia = piaSelf
+        } else {
+            startAge = socSecStartAgeSpouse
+            pia = piaSpouse
+        }
+        if (startAge < 62.0) {
+            return 0.0
+        }
+        val ageDiff = Math.round((startAge - 67.0) * 12.0).toInt()
+        val monthly: Double
+        if (ageDiff < 0) {
+            val reductionMonths = min(-ageDiff, 36)
+            var reduction = reductionMonths * 5.0 / 9.0
+            if (-ageDiff > 36) {
+                val extraMonths = -ageDiff - 36
+                reduction += extraMonths * 5.0 / 12.0
+            }
+            monthly = pia * (1.0 - reduction / 100.0)
+        } else {
+            val creditMonths = min(ageDiff, 36)
+            monthly = pia * (1.0 + (creditMonths * 2.0 / 3.0) / 100.0)
+        }
+        return monthly * 12.0 * inflationAdjustmentFactor
+    }
+
+    private fun calcPotentialPension(isSelf: Boolean): Double {
+        val startAge: Double
+        val early: Double
+        val late: Double
+        if (isSelf) {
+            startAge = pensionStartAgeSelf
+            early = formData.getDouble("pension_early", 0.0)
+            late = formData.getDouble("pension_late", 0.0)
+        } else {
+            startAge = pensionStartAgeSpouse
+            early = formData.getDouble("pension_early_spouse", 0.0)
+            late = formData.getDouble("pension_late_spouse", 0.0)
+        }
+        if (early < 0.0 || late < 0.0) {
+            return calcStatePension(isSelf)
+        }
+        val maturity = min(startAge - YOUNG_PENSION_AGE, OLD_PENSION_AGE - YOUNG_PENSION_AGE)
+        val increment = (late - early) * maturity / (OLD_PENSION_AGE - YOUNG_PENSION_AGE)
+        val monthly = early + increment
+        return monthly * 12.0
     }
 
     fun suggestRmd(): Double {
