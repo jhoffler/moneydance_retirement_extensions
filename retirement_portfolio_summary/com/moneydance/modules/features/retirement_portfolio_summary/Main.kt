@@ -55,6 +55,7 @@ class Main : FeatureModule() {
                 val book = bookContext?.currentAccountBook
                 if (book == null) {
                     JOptionPane.showMessageDialog(null, "No Moneydance dataset is currently open.", "Error", JOptionPane.ERROR_MESSAGE)
+                    bookContext?.showURL("moneydance:setprogress?label=")
                     return
                 }
                 summaryWindow = SummaryWindow(this, book)
@@ -63,8 +64,10 @@ class Main : FeatureModule() {
                 summaryWindow?.isVisible = true
                 summaryWindow?.toFront()
                 summaryWindow?.requestFocus()
+                bookContext?.showURL("moneydance:setprogress?label=")
             }
-        } finally {
+        } catch (e: Exception) {
+            e.printStackTrace()
             bookContext?.showURL("moneydance:setprogress?label=")
         }
     }
@@ -459,6 +462,9 @@ class SummaryWindow(private val extension: Main, private val book: AccountBook) 
         contentPane.add(dateControlPanel, BorderLayout.NORTH)
         contentPane.add(mainScroll, BorderLayout.CENTER)
         
+        preferredSize = Dimension(700, 600)
+        minimumSize = Dimension(700, 600)
+        
         // Initial setup for report with today's date
         val today = java.time.LocalDate.now()
         val todayDateInt = today.year * 10000 + today.monthValue * 100 + today.dayOfMonth
@@ -470,168 +476,144 @@ class SummaryWindow(private val extension: Main, private val book: AccountBook) 
     
     private fun updateReport(dateInt: Int) {
         val bookContext = extension.getUnprotectedContext()
-        val bookToUse = bookContext?.currentAccountBook ?: book
+        bookContext?.showURL("moneydance:setprogress?label=Building Retirement Portfolio Summary...")
         
-        reportPanel.removeAll()
-        val tSet = bookToUse.transactionSet
-        val allAccounts = AccountUtil.allMatchesForSearch(bookToUse, AcctTypeFilter())
-        
-        val groups = AccountDivider(bookToUse, dateInt)
-        if (allAccounts != null) {
-            for (acct in allAccounts) {
-                groups.add(acct)
+        Thread {
+            try {
+                val bookToUse = bookContext?.currentAccountBook ?: book
+                val tSet = bookToUse.transactionSet
+                val allAccounts = AccountUtil.allMatchesForSearch(bookToUse, AcctTypeFilter())
+                
+                val groups = AccountDivider(bookToUse, dateInt)
+                if (allAccounts != null) {
+                    for (acct in allAccounts) {
+                        groups.add(acct)
+                    }
+                }
+                
+                val iraSummary = sortAndSum(groups.iras, dateInt)
+                val rothSummary = sortAndSum(groups.roths, dateInt)
+                val taxableSummary = sortAndSum(groups.taxables, dateInt)
+                
+                val grandTotal = iraSummary.total + rothSummary.total + taxableSummary.total
+                val grandCash = iraSummary.cash + rothSummary.cash + taxableSummary.cash
+                val grandBasis = iraSummary.basis + rothSummary.basis + taxableSummary.basis
+                
+                val tempTable = JTable()
+                val fmPlain = tempTable.getFontMetrics(tempTable.font)
+                val fmBold = tempTable.getFontMetrics(tempTable.font.deriveFont(Font.BOLD))
+                
+                fun checkWidth(text: String, isBold: Boolean): Int {
+                    val fm = if (isBold) fmBold else fmPlain
+                    return fm.stringWidth(text)
+                }
+                
+                var maxNameWidth = checkWidth("Account Name", true)
+                if (allAccounts != null) {
+                    for (acct in allAccounts) {
+                        maxNameWidth = maxNameWidth.coerceAtLeast(checkWidth(acct.getAccountName() ?: "", false))
+                    }
+                }
+                
+                val namesToCheck = listOf(
+                    Pair("TOTAL", true),
+                    Pair("IRA Account Total", false),
+                    Pair("Roth Account Total", false),
+                    Pair("Taxable Account Total", false),
+                    Pair("Grand Total", true)
+                )
+                for (item in namesToCheck) {
+                    maxNameWidth = maxNameWidth.coerceAtLeast(checkWidth(item.first, item.second))
+                }
+                
+                val globalNameWidth = maxNameWidth + 20
+                
+                val iraTable = createAccountTable(iraSummary.accounts, iraSummary.total, iraSummary.cash, iraSummary.basis, globalNameWidth, dateInt)
+                val rothTable = createAccountTable(rothSummary.accounts, rothSummary.total, rothSummary.cash, rothSummary.basis, globalNameWidth, dateInt)
+                val taxableTable = createAccountTable(taxableSummary.accounts, taxableSummary.total, taxableSummary.cash, taxableSummary.basis, globalNameWidth, dateInt)
+                
+                val grandTotalsRows = listOf(
+                    TableRowData("IRA Account Total", iraSummary.total, iraSummary.basis, iraSummary.total - iraSummary.basis, iraSummary.cash),
+                    TableRowData("Roth Account Total", rothSummary.total, rothSummary.basis, rothSummary.total - rothSummary.basis, rothSummary.cash),
+                    TableRowData("Taxable Account Total", taxableSummary.total, taxableSummary.basis, taxableSummary.total - taxableSummary.basis, taxableSummary.cash),
+                    TableRowData("Grand Total", grandTotal, grandBasis, grandTotal - grandBasis, grandCash)
+                )
+                val grandTotalsTable = buildTable(grandTotalsRows, globalNameWidth, true)
+
+                SwingUtilities.invokeLater {
+                    reportPanel.removeAll()
+                    
+                    val effDateStr = formatDateInt(dateInt)
+                    val titleLabel = JLabel("Retirement Portfolio Summary as of $effDateStr", SwingConstants.CENTER)
+                    titleLabel.font = Font("SansSerif", Font.BOLD, 18)
+                    titleLabel.alignmentX = Component.CENTER_ALIGNMENT
+                    
+                    val runTimeStr = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMMM dd, YYYY hh:mm a"))
+                    val timeLabel = JLabel("Report Generated: $runTimeStr", SwingConstants.CENTER)
+                    timeLabel.font = Font("SansSerif", Font.ITALIC, 10)
+                    timeLabel.alignmentX = Component.CENTER_ALIGNMENT
+                    
+                    val titlePanel = JPanel()
+                    titlePanel.layout = BoxLayout(titlePanel, BoxLayout.Y_AXIS)
+                    titlePanel.isOpaque = false
+                    titlePanel.alignmentX = Component.LEFT_ALIGNMENT
+                    titlePanel.add(titleLabel)
+                    titlePanel.add(Box.createVerticalStrut(4))
+                    titlePanel.add(timeLabel)
+                    
+                    titlePanel.maximumSize = Dimension(32767, titleLabel.preferredSize.height + timeLabel.preferredSize.height + 20)
+                    reportPanel.add(titlePanel)
+                    reportPanel.add(Box.createVerticalStrut(20))
+                    
+                    fun addSection(title: String, table: JTable, nameWidth: Int) {
+                        val sectionLabel = JLabel(title)
+                        sectionLabel.font = Font("SansSerif", Font.BOLD, 14)
+                        sectionLabel.alignmentX = Component.LEFT_ALIGNMENT
+                        sectionLabel.maximumSize = Dimension(32767, sectionLabel.preferredSize.height)
+                        reportPanel.add(sectionLabel)
+                        reportPanel.add(Box.createVerticalStrut(5))
+                        
+                        val tablePanel = JPanel(BorderLayout())
+                        tablePanel.alignmentX = Component.LEFT_ALIGNMENT
+                        tablePanel.isOpaque = false
+                        tablePanel.add(table.tableHeader, BorderLayout.NORTH)
+                        tablePanel.add(table, BorderLayout.CENTER)
+                        tablePanel.border = BorderFactory.createLineBorder(Color.LIGHT_GRAY)
+                        
+                        val rowHeight = table.rowHeight
+                        val rowCount = table.model.rowCount
+                        val tableHeight = rowCount * rowHeight
+                        val headerHeight = table.tableHeader.preferredSize.height
+                        val totalPaneHeight = tableHeight + headerHeight + 2
+                        
+                        val tableWidth = nameWidth + 380
+                        
+                        tablePanel.minimumSize = Dimension(tableWidth, totalPaneHeight)
+                        tablePanel.preferredSize = Dimension(tableWidth, totalPaneHeight)
+                        tablePanel.maximumSize = Dimension(tableWidth, totalPaneHeight)
+                        
+                        reportPanel.add(tablePanel)
+                        reportPanel.add(Box.createVerticalStrut(20))
+                    }
+                    
+                    addSection("Grand Totals", grandTotalsTable, globalNameWidth)
+                    addSection("IRA Accounts", iraTable, globalNameWidth)
+                    addSection("Roth Accounts", rothTable, globalNameWidth)
+                    addSection("Taxable Accounts", taxableTable, globalNameWidth)
+                    
+                    reportPanel.revalidate()
+                    reportPanel.repaint()
+                    pack()
+                    
+                    bookContext?.showURL("moneydance:setprogress?label=")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                SwingUtilities.invokeLater {
+                    bookContext?.showURL("moneydance:setprogress?label=")
+                }
             }
-        }
-        
-        val iraSummary = sortAndSum(groups.iras, dateInt)
-        val rothSummary = sortAndSum(groups.roths, dateInt)
-        val taxableSummary = sortAndSum(groups.taxables, dateInt)
-        
-        val grandTotal = iraSummary.total + rothSummary.total + taxableSummary.total
-        val grandCash = iraSummary.cash + rothSummary.cash + taxableSummary.cash
-        val grandBasis = iraSummary.basis + rothSummary.basis + taxableSummary.basis
-        
-        val tempTable = JTable()
-        val fmPlain = tempTable.getFontMetrics(tempTable.font)
-        val fmBold = tempTable.getFontMetrics(tempTable.font.deriveFont(Font.BOLD))
-        
-        fun checkWidth(text: String, isBold: Boolean): Int {
-            val fm = if (isBold) fmBold else fmPlain
-            return fm.stringWidth(text)
-        }
-        
-        var maxNameWidth = checkWidth("Account Name", true)
-        if (allAccounts != null) {
-            for (acct in allAccounts) {
-                maxNameWidth = maxNameWidth.coerceAtLeast(checkWidth(acct.getAccountName() ?: "", false))
-            }
-        }
-        
-        val namesToCheck = listOf(
-            Pair("TOTAL", true),
-            Pair("IRA Account Total", false),
-            Pair("Roth Account Total", false),
-            Pair("Taxable Account Total", false),
-            Pair("Grand Total", true)
-        )
-        for (item in namesToCheck) {
-            maxNameWidth = maxNameWidth.coerceAtLeast(checkWidth(item.first, item.second))
-        }
-        
-        val globalNameWidth = maxNameWidth + 20
-        
-        val titleLabel = JLabel("Retirement Portfolio Summary", SwingConstants.CENTER)
-        titleLabel.font = Font("SansSerif", Font.BOLD, 18)
-        titleLabel.alignmentX = Component.CENTER_ALIGNMENT
-        
-        val effDateStr = formatDateInt(dateInt)
-        val dateLabelText = "Effective Date: $effDateStr"
-        val dateLabel = JLabel(dateLabelText, SwingConstants.CENTER)
-        dateLabel.font = Font("SansSerif", Font.BOLD, 12)
-        dateLabel.alignmentX = Component.CENTER_ALIGNMENT
-        
-        val runTimeStr = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMMM dd, YYYY hh:mm a"))
-        val timeLabel = JLabel("Report Generated: $runTimeStr", SwingConstants.CENTER)
-        timeLabel.font = Font("SansSerif", Font.ITALIC, 10)
-        timeLabel.alignmentX = Component.CENTER_ALIGNMENT
-        
-        val titlePanel = JPanel()
-        titlePanel.layout = BoxLayout(titlePanel, BoxLayout.Y_AXIS)
-        titlePanel.isOpaque = false
-        titlePanel.alignmentX = Component.LEFT_ALIGNMENT
-        titlePanel.add(titleLabel)
-        titlePanel.add(Box.createVerticalStrut(4))
-        titlePanel.add(dateLabel)
-        titlePanel.add(Box.createVerticalStrut(4))
-        titlePanel.add(timeLabel)
-        
-        titlePanel.maximumSize = Dimension(32767, titleLabel.preferredSize.height + dateLabel.preferredSize.height + timeLabel.preferredSize.height + 20)
-        reportPanel.add(titlePanel)
-        reportPanel.add(Box.createVerticalStrut(20))
-        
-        fun addSection(title: String, table: JTable, nameWidth: Int) {
-            val sectionLabel = JLabel(title)
-            sectionLabel.font = Font("SansSerif", Font.BOLD, 14)
-            sectionLabel.alignmentX = Component.LEFT_ALIGNMENT
-            reportPanel.add(sectionLabel)
-            reportPanel.add(Box.createVerticalStrut(5))
-            
-            val scrollPane = JScrollPane(table)
-            scrollPane.alignmentX = Component.LEFT_ALIGNMENT
-            scrollPane.verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-            scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
-            
-            val rowHeight = table.rowHeight
-            val rowCount = table.model.rowCount
-            val tableHeight = rowCount * rowHeight
-            val headerHeight = table.tableHeader.preferredSize.height
-            val totalPaneHeight = tableHeight + headerHeight + 4
-            
-            val tableWidth = nameWidth + 380
-            
-            scrollPane.minimumSize = Dimension(tableWidth, totalPaneHeight)
-            scrollPane.preferredSize = Dimension(tableWidth, totalPaneHeight)
-            scrollPane.maximumSize = Dimension(32767, totalPaneHeight)
-            
-            reportPanel.add(scrollPane)
-            reportPanel.add(Box.createVerticalStrut(20))
-        }
-        
-        val iraTable = createAccountTable(iraSummary.accounts, iraSummary.total, iraSummary.cash, iraSummary.basis, globalNameWidth, dateInt)
-        val rothTable = createAccountTable(rothSummary.accounts, rothSummary.total, rothSummary.cash, rothSummary.basis, globalNameWidth, dateInt)
-        val taxableTable = createAccountTable(taxableSummary.accounts, taxableSummary.total, taxableSummary.cash, taxableSummary.basis, globalNameWidth, dateInt)
-        
-        val grandTotalsRows = listOf(
-            TableRowData("IRA Account Total", iraSummary.total, iraSummary.basis, iraSummary.total - iraSummary.basis, iraSummary.cash),
-            TableRowData("Roth Account Total", rothSummary.total, rothSummary.basis, rothSummary.total - rothSummary.basis, rothSummary.cash),
-            TableRowData("Taxable Account Total", taxableSummary.total, taxableSummary.basis, taxableSummary.total - taxableSummary.basis, taxableSummary.cash),
-            TableRowData("Grand Total", grandTotal, grandBasis, grandTotal - grandBasis, grandCash)
-        )
-        val grandTotalsTable = buildTable(grandTotalsRows, globalNameWidth, true)
-        
-        addSection("Grand Totals", grandTotalsTable, globalNameWidth)
-        addSection("IRA Accounts", iraTable, globalNameWidth)
-        addSection("Roth Accounts", rothTable, globalNameWidth)
-        addSection("Taxable Accounts", taxableTable, globalNameWidth)
-        
-        val footerPanel = JPanel(GridBagLayout())
-        footerPanel.border = BorderFactory.createEmptyBorder(10, 5, 5, 5)
-        footerPanel.isOpaque = false
-        footerPanel.alignmentX = Component.LEFT_ALIGNMENT
-        
-        val fc = GridBagConstraints()
-        fc.fill = GridBagConstraints.HORIZONTAL
-        fc.insets = Insets(2, 5, 2, 5)
-        
-        fun addFooterRow(labelStr: String, valStr: String, rowIdx: Int) {
-            fc.gridy = rowIdx
-            
-            fc.gridx = 0
-            fc.weightx = 0.25
-            val l = JLabel(labelStr)
-            l.font = Font("SansSerif", Font.BOLD, 10)
-            footerPanel.add(l, fc)
-            
-            fc.gridx = 1
-            fc.weightx = 0.75
-            val v = JLabel(valStr)
-            v.font = Font("SansSerif", Font.PLAIN, 10)
-            footerPanel.add(v, fc)
-        }
-        
-        val datasetPath = bookToUse.rootFolder?.toString() ?: "Unknown"
-        addFooterRow("Dataset Path:", datasetPath, 0)
-        
-        val dfCount = DecimalFormat("#,###")
-        val txnCount = tSet?.transactionCount ?: 0
-        addFooterRow("Total Transactions:", dfCount.format(txnCount), 1)
-        
-        footerPanel.maximumSize = Dimension(32767, footerPanel.preferredSize.height)
-        reportPanel.add(footerPanel)
-        
-        reportPanel.revalidate()
-        reportPanel.repaint()
-        pack()
+        }.start()
     }
     
     fun goAway() {

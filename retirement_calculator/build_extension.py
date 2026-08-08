@@ -10,7 +10,7 @@ devkit_lib = r"C:\Program Files\Moneydance\lib\moneydance.jar"
 kotlin_compiler_dir = os.path.join(base_dir, "kotlin-compiler")
 kotlinc_path = os.path.join(kotlin_compiler_dir, "kotlinc", "bin", "kotlinc.bat")
 build_dir = os.path.join(base_dir, "build")
-mxt_file = os.path.join(base_dir, "retirement_portfolio_summary.mxt")
+mxt_file = os.path.join(base_dir, "retirement_calculator.mxt")
 
 # 2. Download Kotlinc if not present
 if not os.path.exists(kotlinc_path):
@@ -41,7 +41,7 @@ os.makedirs(build_dir)
 
 # 4. Compile Kotlin code
 print("Compiling Kotlin extension...")
-pkg_dir = os.path.join(base_dir, "com", "moneydance", "modules", "features", "retirement_portfolio_summary")
+pkg_dir = os.path.join(base_dir, "com", "moneydance", "modules", "features", "retirement_calculator")
 source_files = [os.path.join(pkg_dir, f) for f in os.listdir(pkg_dir) if f.endswith(".kt")]
 
 cmd = [
@@ -68,7 +68,7 @@ else:
 
 # 5. Package into MXT
 print("Packaging MXT file...")
-meta_info_src = os.path.join(base_dir, "com", "moneydance", "modules", "features", "retirement_portfolio_summary", "meta_info.dict")
+meta_info_src = os.path.join(base_dir, "com", "moneydance", "modules", "features", "retirement_calculator", "meta_info.dict")
 
 with zipfile.ZipFile(mxt_file, 'w') as zipf:
     # Add compiled classes
@@ -80,6 +80,6 @@ with zipfile.ZipFile(mxt_file, 'w') as zipf:
             zipf.write(file_path, arcname)
             
     # Add meta_info.dict in the correct path
-    zipf.write(meta_info_src, "com/moneydance/modules/features/retirement_portfolio_summary/meta_info.dict")
+    zipf.write(meta_info_src, "com/moneydance/modules/features/retirement_calculator/meta_info.dict")
 
 print(f"Successfully created: {mxt_file}")

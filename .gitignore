@@ -1,0 +1,21 @@
+# Build directories and class files
+build/
+**/build/
+*.class
+**/*.class
+
+# MXT extension packages
+*.mxt
+**/*.mxt
+
+# Python cache and IDE files
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+.agents/
+.gemini/
+
+# Local compilers
+kotlin-compiler/
+**/kotlin-compiler/
