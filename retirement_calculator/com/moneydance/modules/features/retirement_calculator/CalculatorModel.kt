@@ -827,7 +827,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         val finalRealizedGain = simulateStockSale(finalStockSold)
         realizedGain = finalRealizedGain
-        val finalResult = calculateRetirementTax(iraDistribution + rothConversion, finalRealizedGain)
+        val finalResult = calculateRetirementTax(iraDistribution, finalRealizedGain)
         
         fedTaxableSocialSecurity = finalResult.taxableSocialSecurity
         fedOrdinaryBracketRate = finalResult.fedOrdinaryBracketRate

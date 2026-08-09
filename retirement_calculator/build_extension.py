@@ -34,6 +34,19 @@ if not os.path.exists(kotlinc_path):
     os.remove(zip_path)
     print("Kotlin compiler installed.")
 
+# 2.5 Update version to reflect the compilation timestamp in meta_info.dict
+import datetime
+import re
+timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+meta_info_src = os.path.join(base_dir, "com", "moneydance", "modules", "features", "retirement_calculator", "meta_info.dict")
+with open(meta_info_src, "r", encoding="utf-8") as f:
+    content = f.read()
+
+new_content = re.sub(r'"module_build"\s*=\s*"[^"]*"', f'"module_build" = "{timestamp}"', content)
+with open(meta_info_src, "w", encoding="utf-8") as f:
+    f.write(new_content)
+print(f"Updated module_build in meta_info.dict to: {timestamp}")
+
 # 3. Clean and prepare build dir
 if os.path.exists(build_dir):
     shutil.rmtree(build_dir)
