@@ -1205,6 +1205,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val sellRegex = Regex("""Sell \$(-?[0-9,.]+) of (.*?) stock \(cost basis: \$(-?[0-9,.]+), realized gain: \$(-?[0-9,.]+)\) to (.*)""")
         val donateRegex = Regex("""Donate \$(-?[0-9,.]+) of (.*?) stock \(cost basis: \$(-?[0-9,.]+)\) directly to (.*)""")
         val convertRegex = Regex("""Convert \$(-?[0-9,.]+) from (.*?) to (.*)""")
+        val qcdRegex = Regex("""QCD \$(-?[0-9,.]+) of (.*?) to (.*)""")
 
         for (i in currentResults.indices) {
             val r = currentResults[i]
@@ -1397,6 +1398,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val taxableIntVal = getD("taxable_interest")
             val taxableDivVal = getD("taxable_dividends")
 
+            val qcdVal = getD("qcd_amount")
+
             val ordIncDerivationMd = buildString {
                 append("    * Gross Ordinary Income components:\n")
                 append("      * Salary: **").append(fmt(salSelf + salSp)).append("**\n")
@@ -1408,9 +1411,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 }
                 append("      * Taxable Social Security: **").append(fmt(taxSS)).append("** (Gross SS: **").append(fmt(ssSelf + ssSp)).append("**)\n")
                 append("    * Deductions:\n")
-                append("      * Standard Deduction: **-").append(fmt(stdDed)).append("**\n")
                 if (dafContrib > 0.0) {
+                    append("      * Itemized Deduction: **-").append(fmt(dafContrib)).append("**\n")
                     append("      * DAF Contribution: **-").append(fmt(dafContrib)).append("**\n")
+                } else {
+                    append("      * Standard Deduction: **-").append(fmt(stdDed)).append("**\n")
+                    if (qcdVal > 0.0) {
+                        append("      * QCD Donation: **-").append(fmt(qcdVal)).append("**\n")
+                    }
                 }
             }
             
@@ -1436,9 +1444,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("</ul></li>")
                 append("<li>Deductions:")
                 append("<ul style=\"padding-left: 20px;\">")
-                append("<li>Standard Deduction: <strong>-").append(fmt(stdDed)).append("</strong></li>")
                 if (dafContrib > 0.0) {
+                    append("<li>Itemized Deduction: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
                     append("<li>DAF Contribution: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
+                } else {
+                    append("<li>Standard Deduction: <strong>-").append(fmt(stdDed)).append("</strong></li>")
+                    if (qcdVal > 0.0) {
+                        append("<li>QCD Donation: <strong>-").append(fmt(qcdVal)).append("</strong></li>")
+                    }
                 }
                 append("</ul></li>")
                 append("</ul>")
@@ -1540,24 +1553,43 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                             val rawAmt = match.groupValues[1]
                             val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
                             val asset = match.groupValues[2].trim()
+                            val rawBasis = match.groupValues[3]
                             val purpose = "Donate directly to " + match.groupValues[4].trim()
-                            row = ActionRow("Donate", asset, amount, "N/A", purpose)
+                            
+                            val amtVal = rawAmt.replace(",", "").toDoubleOrNull() ?: 0.0
+                            val basisVal = rawBasis.replace(",", "").toDoubleOrNull() ?: 0.0
+                            val gainVal = amtVal - basisVal
+                            val gainStr = if (gainVal >= 0.0) {
+                                "($" + String.format("%,.2f", gainVal) + ")"
+                            } else {
+                                "(-$" + String.format("%,.2f", -gainVal) + ")"
+                            }
+                            row = ActionRow("Donate", asset, amount, gainStr, purpose)
                         } else {
-                            match = purchaseRegex.matchEntire(log)
+                            match = qcdRegex.matchEntire(log)
                             if (match != null) {
                                 val rawAmt = match.groupValues[1]
                                 val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
                                 val asset = match.groupValues[2].trim()
                                 val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
-                                row = ActionRow("Buy", asset, amount, "N/A", purpose)
+                                row = ActionRow("QCD", asset, amount, "N/A", purpose)
                             } else {
-                                match = withdrawRegex.matchEntire(log)
+                                match = purchaseRegex.matchEntire(log)
                                 if (match != null) {
                                     val rawAmt = match.groupValues[1]
                                     val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
                                     val asset = match.groupValues[2].trim()
                                     val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
-                                    row = ActionRow("Withdraw", asset, amount, "N/A", purpose)
+                                    row = ActionRow("Buy", asset, amount, "N/A", purpose)
+                                } else {
+                                    match = withdrawRegex.matchEntire(log)
+                                    if (match != null) {
+                                        val rawAmt = match.groupValues[1]
+                                        val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                        val asset = match.groupValues[2].trim()
+                                        val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
+                                        row = ActionRow("Withdraw", asset, amount, "N/A", purpose)
+                                    }
                                 }
                             }
                         }

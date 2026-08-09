@@ -173,6 +173,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var dafDistribution: Double = 0.0
     var dafContribution: Double = 0.0
     var rothConversion: Double = 0.0
+    var qcdAmount: Double = 0.0
     var realizedGain: Double = 0.0
     var fedTaxableSocialSecurity: Double = 0.0
 
@@ -514,6 +515,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     }
 
     private fun optimizeWithdrawalsForNetCash() {
+        dafContribution = 0.0
+        qcdAmount = 0.0
         val targetNetCash = mortgage + elderCare + otherExpenses + travel
         val estimatedGrossNeeded = targetNetCash + payrollTaxes + propertyTaxes + 5000.0
         val ssSelfPotential = calcPotentialSocSec(true)
@@ -798,6 +801,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             taxableDistribution = currentBrokerageSale
 
             dafContribution = 0.0
+            qcdAmount = 0.0
 
             for (iter in 0 until 5) {
                 val stockSold = if (investReturnPct >= 0.0) {
@@ -812,9 +816,19 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 surplus = netCash + rothDistribution - targetNetCash
 
                 if (suggestRmd() > 0.0 && surplus > 0.0) {
-                    dafContribution = surplus * dafExcessPct
+                    val charityAmount = surplus * dafExcessPct
+                    val gainOnStock = calculateGainForDonation(charityAmount)
+                    val isDonationAdvantageous = (gainOnStock * 0.15) > (standardDeduction * result.fedOrdinaryBracketRate)
+                    if (isDonationAdvantageous) {
+                        dafContribution = charityAmount
+                        qcdAmount = 0.0
+                    } else {
+                        dafContribution = 0.0
+                        qcdAmount = charityAmount
+                    }
                 } else {
                     dafContribution = 0.0
+                    qcdAmount = 0.0
                     break
                 }
             }
@@ -873,6 +887,22 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         return totalRealizedGain
     }
 
+    private fun calculateGainForDonation(amount: Double): Double {
+        if (amount <= 0.0) return 0.0
+        val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
+        activeLots.sortBy { it.basisRatio } // Most appreciated (lowest basis ratio) first
+        var remainingAmt = amount
+        var totalGain = 0.0
+        for (lot in activeLots) {
+            if (remainingAmt <= 0.0) break
+            val toDeplete = min(lot.currentVal, remainingAmt)
+            val realizedBasis = toDeplete * lot.basisRatio
+            totalGain += (toDeplete - realizedBasis)
+            remainingAmt -= toDeplete
+        }
+        return totalGain
+    }
+
     private fun calculateEndingBalances(
         iraCashPre: Double, iraNonCashPre: Double,
         rothCashPre: Double, rothNonCashPre: Double,
@@ -920,6 +950,10 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             if (spendStock > 0.01) {
                 actionLogs.add("Withdraw \$${String.format("%,.2f", spendStock)} from IRA stock (non-cash) to cover expenses or satisfy RMD.")
             }
+        }
+        
+        if (qcdAmount > 0.01) {
+            actionLogs.add("QCD \$${String.format("%,.2f", qcdAmount)} of IRA Qualified Charitable Distribution to reduce taxes on RMD.")
         }
         
         val rothDeposit = -rothDistribution
@@ -1074,7 +1108,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     )
 
     fun calculateRetirementTax(taxDeferredDist: Double, longTermGains: Double): TaxCalculationResult {
-        val otherIncome = getOtherIncome() + longTermGains + taxDeferredDist
+        val ordinaryIraDist = max(0.0, taxDeferredDist - qcdAmount)
+        val otherIncome = getOtherIncome() + longTermGains + ordinaryIraDist
         val ssBenefits = socSecSelf + socSecSpouse
         val combinedIncome = (0.5 * ssBenefits) + otherIncome
 
@@ -1093,8 +1128,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             )
         }
 
-        val grossOrdinaryIncome = getOrdinaryIncome() + taxDeferredDist + taxableSS
-        val totalDeductions = standardDeduction + dafContribution
+        val grossOrdinaryIncome = getOrdinaryIncome() + ordinaryIraDist + taxableSS
+        val totalDeductions = if (dafContribution > 0.0) dafContribution else standardDeduction
         val taxableOrdinaryIncome = max(0.0, grossOrdinaryIncome - totalDeductions)
 
         var ordTax = 0.0
@@ -1132,7 +1167,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         capGainsTax = totalTax - baseTax
 
-        val stateIncome = max(0.0, grossOrdinaryIncome - formData.getDouble("state_std_deduction", 22500.0) * inflationAdjustmentFactor)
+        val stateDeduction = if (dafContribution > 0.0) dafContribution else formData.getDouble("state_std_deduction", 22500.0) * inflationAdjustmentFactor
+        val stateIncome = max(0.0, grossOrdinaryIncome - stateDeduction)
         stateTaxes = stateIncome * formData.getDouble("state_tax_rate", 4.5) / 100.0
         ordinaryTax = ordTax
         capitalGainsTax = capGainsTax
@@ -1256,6 +1292,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     private fun fundSavings(surplusVal: Double) {
         rothConversion = 0.0
+        qcdAmount = 0.0
         var surplus = surplusVal
         
         var iraTarget = min(salarySelf * 0.06, surplus)
@@ -1291,13 +1328,23 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
 
         if (rmdVal > 0.0 && surplus > 0.0) {
-            val dafContrib = surplus * dafExcessPct
+            val charityAmount = surplus * dafExcessPct
             val taxableContrib = surplus * (1.0 - dafExcessPct)
             taxableDistribution -= taxableContrib
-            dafContribution = dafContrib
+            
+            val gainOnStock = calculateGainForDonation(charityAmount)
+            val isDonationAdvantageous = (gainOnStock * 0.15) > (standardDeduction * fedOrdinaryBracketRate)
+            if (isDonationAdvantageous) {
+                dafContribution = charityAmount
+                qcdAmount = 0.0
+            } else {
+                dafContribution = 0.0
+                qcdAmount = charityAmount
+            }
         } else {
             taxableDistribution -= surplus
             dafContribution = 0.0
+            qcdAmount = 0.0
         }
     }
 
@@ -1519,6 +1566,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["taxable_interest"] = taxableInterest
         result["daf_distro"] = dafDistribution
         result["daf_contrib"] = dafContribution
+        result["qcd_amount"] = qcdAmount
         result["rmd"] = suggestRmd()
         result["tax_limit_reason"] = taxLimitReason ?: ""
         result["invest"] = (iraSavingsEnd + rothSavingsEnd + taxableSavingsEnd) - (iraSavings + rothSavings + taxableSavings)
