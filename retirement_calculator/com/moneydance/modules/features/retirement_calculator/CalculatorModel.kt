@@ -1375,6 +1375,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["cost_basis"] = taxableCostBasis
         result["salary"] = salarySelf + salarySpouse
         result["dividends"] = dividends
+        result["interest"] = interest
         result["ss"] = socSecSelf + socSecSpouse + pensionSelf + pensionSpouse
         result["socsec"] = socSecSelf + socSecSpouse
         result["socsecSelf"] = socSecSelf
