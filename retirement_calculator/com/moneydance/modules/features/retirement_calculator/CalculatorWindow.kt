@@ -486,6 +486,28 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private fun createTablePanel(): JPanel {
         val p = JPanel(BorderLayout())
         resultTable.autoResizeMode = JTable.AUTO_RESIZE_OFF
+        
+        // Add popup menu for copying stock lots
+        val popupMenu = JPopupMenu()
+        val copyLotsItem = JMenuItem("Copy Stock Lots for selected year")
+        copyLotsItem.addActionListener {
+            copyStockLotsForSelectedRow()
+        }
+        popupMenu.add(copyLotsItem)
+        resultTable.componentPopupMenu = popupMenu
+        
+        // Auto-select row on right click
+        resultTable.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mousePressed(e: java.awt.event.MouseEvent) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    val row = resultTable.rowAtPoint(e.point)
+                    if (row >= 0 && row < resultTable.rowCount) {
+                        resultTable.setRowSelectionInterval(row, row)
+                    }
+                }
+            }
+        })
+        
         p.add(JScrollPane(resultTable), BorderLayout.CENTER)
         return p
     }
@@ -707,12 +729,114 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                             if (subAccounts != null) {
                                 for (subAcct in subAccounts) {
                                     if (subAcct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.SECURITY) {
-                                        val secVal = getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
-                                        val secBasis = getHistoricalSecurityCostBasis(mdBook, subAcct, dateInt)
-                                        if (secVal > 0L) {
-                                            val rawName = subAcct.getAccountName() ?: "Stock"
-                                            val encName = java.net.URLEncoder.encode(rawName, "UTF-8")
-                                            taxableLots.add("$encName,${secBasis / 100.0},${secVal / 100.0}")
+                                        val lotsTable = com.infinitekind.moneydance.model.InvestUtil.getRemainingLots(mdBook, subAcct, dateInt)
+                                        if (lotsTable != null && !lotsTable.isEmpty()) {
+                                            for (key in lotsTable.keys) {
+                                                val txnId = key as? String ?: continue
+                                                val tracker = lotsTable[txnId] ?: continue
+                                                val remainingShares = try {
+                                                    val field = tracker.javaClass.getDeclaredField("availableShares")
+                                                    field.isAccessible = true
+                                                    field.getLong(tracker)
+                                                } catch (e: Exception) {
+                                                    0L
+                                                }
+                                                if (remainingShares > 0L) {
+                                                    val buySplit = try {
+                                                        val txnSet = mdBook.javaClass.getMethod("getTransactionSet").invoke(mdBook)
+                                                        val rawTxn = txnSet.javaClass.getMethod("getTxnByID", String::class.java).invoke(txnSet, txnId)
+                                                        if (rawTxn != null) {
+                                                            if (rawTxn.javaClass.name.contains("SplitTxn")) {
+                                                                rawTxn
+                                                            } else if (rawTxn.javaClass.name.contains("ParentTxn")) {
+                                                                var foundSplit: Any? = null
+                                                                val getSplitM = rawTxn.javaClass.getMethod("getSplit", Int::class.java)
+                                                                val getSplitCountM = rawTxn.javaClass.getMethod("getSplitCount")
+                                                                val splitCount = getSplitCountM.invoke(rawTxn) as Int
+                                                                for (idx in 0 until splitCount) {
+                                                                    val split = getSplitM.invoke(rawTxn, idx) ?: continue
+                                                                    val acct = split.javaClass.getMethod("getAccount").invoke(split)
+                                                                    if (acct == subAcct) {
+                                                                        foundSplit = split
+                                                                        break
+                                                                    }
+                                                                }
+                                                                foundSplit
+                                                            } else {
+                                                                rawTxn
+                                                            }
+                                                        } else {
+                                                            null
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        null
+                                                    }
+                                                    if (buySplit != null) {
+                                                        val originalShares = try {
+                                                            buySplit.javaClass.getMethod("getValue").invoke(buySplit) as Long
+                                                        } catch (e: Exception) {
+                                                            0L
+                                                        }
+                                                        var originalCostBasis = try {
+                                                            val amt = buySplit.javaClass.getMethod("getAmount").invoke(buySplit) as Long
+                                                            Math.abs(amt)
+                                                        } catch (e: Exception) {
+                                                            0L
+                                                        }
+                                                        if (originalCostBasis == 0L) {
+                                                            originalCostBasis = try {
+                                                                val method = Class.forName("com.infinitekind.moneydance.model.InvestUtil")
+                                                                    .getDeclaredMethod("getCostBasis", com.infinitekind.moneydance.model.Account::class.java, com.infinitekind.moneydance.model.SplitTxn::class.java)
+                                                                method.isAccessible = true
+                                                                method.invoke(null, subAcct, buySplit) as Long
+                                                            } catch (e: Exception) {
+                                                                0L
+                                                            }
+                                                        }
+                                                        
+                                                        // Calculate remaining cost basis
+                                                        val remainingCostBasis = if (originalShares > 0L) {
+                                                            originalCostBasis.toDouble() * (remainingShares.toDouble() / originalShares.toDouble())
+                                                        } else {
+                                                            originalCostBasis.toDouble()
+                                                        }
+                                                        
+                                                        // Get current value of remaining shares
+                                                        val totalShares = com.infinitekind.moneydance.model.AccountUtil.getBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                                        val secVal = getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                                        
+                                                        val currentVal = if (totalShares > 0L) {
+                                                            secVal.toDouble() * (remainingShares.toDouble() / totalShares.toDouble())
+                                                        } else {
+                                                            0.0
+                                                        }
+                                                        
+                                                        // Format name: Name (Bought YYYY-MM-DD)
+                                                        val rawName = subAcct.getAccountName() ?: "Stock"
+                                                        val buyDate = try {
+                                                            buySplit.javaClass.getMethod("getDateInt").invoke(buySplit) as Int
+                                                        } catch (e: Exception) {
+                                                            0
+                                                        }
+                                                        val yr = buyDate / 10000
+                                                        val mo = (buyDate % 10000) / 100
+                                                        val dy = buyDate % 100
+                                                        val dateStr = String.format("%04d-%02d-%02d", yr, mo, dy)
+                                                        val lotName = "$rawName (Bought $dateStr)"
+                                                        
+                                                        val encName = java.net.URLEncoder.encode(lotName, "UTF-8")
+                                                        taxableLots.add("$encName,${remainingCostBasis / 100.0},${currentVal / 100.0}")
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            val secVal = getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                            val secBasis = getHistoricalSecurityCostBasis(mdBook, subAcct, dateInt)
+                                            if (secVal > 0L) {
+                                                val rawName = subAcct.getAccountName() ?: "Stock"
+                                                val encName = java.net.URLEncoder.encode(rawName, "UTF-8")
+                                                taxableLots.add("$encName,${secBasis / 100.0},${secVal / 100.0}")
+                                            }
                                         }
                                     }
                                 }
@@ -1046,6 +1170,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         
         val sb = StringBuilder()
+        val htmlSb = StringBuilder()
+        
         val fmt = { v: Any? ->
             val d = when (v) {
                 is Number -> v.toDouble()
@@ -1054,17 +1180,48 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             }
             DecimalFormat("$#,##0.00").format(d)
         }
+
+        val appendHtmlTableRow = { hsb: StringBuilder, cells: List<String>, isHeader: Boolean, isTotal: Boolean ->
+            hsb.append("<tr style=\"")
+            if (isTotal) {
+                hsb.append("font-weight: bold; background-color: #f2f2f2;")
+            }
+            hsb.append("\">")
+            for (i in cells.indices) {
+                val cell = cells[i]
+                val align = if (i == 0) "left" else "right"
+                val padding = "padding: 6px 8px;"
+                val border = "border: 1px solid #cccccc;"
+                val font = if (isHeader) "font-weight: bold; background-color: #e6e6e6;" else ""
+                hsb.append("<td style=\"text-align: ").append(align).append("; ").append(padding).append(" ").append(border).append(" ").append(font).append("\">")
+                hsb.append(cell)
+                hsb.append("</td>")
+            }
+            hsb.append("</tr>\n")
+        }
         
+        val withdrawRegex = Regex("""Withdraw \$(-?[0-9,.]+) from (.*?) to (.*)""")
+        val purchaseRegex = Regex("""Purchase \$(-?[0-9,.]+) of stock named '(.*?)' to (.*)""")
+        val sellRegex = Regex("""Sell \$(-?[0-9,.]+) of (.*?) stock \(cost basis: \$(-?[0-9,.]+), realized gain: \$(-?[0-9,.]+)\) to (.*)""")
+        val donateRegex = Regex("""Donate \$(-?[0-9,.]+) of (.*?) stock \(cost basis: \$(-?[0-9,.]+)\) directly to (.*)""")
+        val convertRegex = Regex("""Convert \$(-?[0-9,.]+) from (.*?) to (.*)""")
+
         for (i in currentResults.indices) {
             val r = currentResults[i]
             val yr = r["year"]?.toString() ?: "Unknown"
             val age = (r["age"] as? Number)?.toDouble() ?: 0.0
             val ageSp = (r["age_spouse"] as? Number)?.toDouble() ?: 0.0
             
-            sb.append("# Annual Financial Instructions for Year: ").append(yr).append("\n\n")
+            sb.append("# ").append(yr).append(" Annual Financial Instructions\n\n")
+            if (i > 0) {
+                htmlSb.append("<div style=\"text-align: center; color: #999999; margin-top: 24pt; margin-bottom: 24pt; font-size: 9pt; font-family: Arial, sans-serif; font-style: italic;\">[Page Break - Press Ctrl+Enter here]</div>\n")
+            }
+            htmlSb.append("<h1 style=\"text-align: center; font-family: Arial, sans-serif; font-size: 16pt; color: #333333; margin-top: 18pt; margin-bottom: 6pt;\">").append(yr).append(" Annual Financial Instructions</h1>\n")
+            htmlSb.append("<hr style=\"border: 0; border-top: 1px solid #cccccc; margin-top: 6pt; margin-bottom: 18pt;\" />\n")
             
-            // Joint Info Table
             sb.append("## Joint Financial Information\n")
+            htmlSb.append("<h2 style=\"font-family: Arial, sans-serif; font-size: 13pt; color: #555555; margin-top: 14pt; margin-bottom: 6pt;\">Joint Financial Information</h2>\n")
+            
             val getD = { key: String -> (r[key] as? Number)?.toDouble() ?: 0.0 }
             val iraSav = getD("ira_savings")
             val iraCsh = getD("ira_cash")
@@ -1082,9 +1239,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val dafRoi = getD("daf_roi")
             val totRoi = getD("roi")
             
-            val iraDiv = max(0.0, iraSav - iraCsh) * 0.01
-            val rothDiv = max(0.0, rothSav - rothCsh) * 0.01
-            val taxDiv = max(0.0, taxSav - taxCsh) * 0.01
+            val iraDiv = Math.max(0.0, iraSav - iraCsh) * 0.01
+            val rothDiv = Math.max(0.0, rothSav - rothCsh) * 0.01
+            val taxDiv = Math.max(0.0, taxSav - taxCsh) * 0.01
             val totDiv = getD("dividends")
             
             val iraInt = iraCsh * 0.03
@@ -1101,8 +1258,122 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             sb.append("| DAF | ").append(fmt(dafSav)).append(" | N/A | $0.00 | ").append(fmt(dafRoi)).append(" | $0.00 | $0.00 |\n")
             sb.append("| **Total** | **").append(fmt(totSav)).append("** | **").append(fmt(taxBasis)).append("** | **").append(fmt(iraCsh + rothCsh + taxCsh)).append("** | **").append(fmt(totRoi)).append("** | **").append(fmt(totDiv)).append("** | **").append(fmt(totInt)).append("** |\n\n")
             sb.append("</div>\n\n")
+            
+            val htmlTable = StringBuilder()
+            htmlTable.append("<table style=\"border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 9pt; margin-bottom: 12pt;\">\n")
+            appendHtmlTableRow(htmlTable, listOf("Savings Type", "Total Balance", "Cost Basis", "Cash Portion", "ROI", "Dividends", "Interest"), true, false)
+            appendHtmlTableRow(htmlTable, listOf("IRA", fmt(iraSav), "N/A", fmt(iraCsh), fmt(iraRoi), fmt(iraDiv), fmt(iraInt)), false, false)
+            appendHtmlTableRow(htmlTable, listOf("Roth", fmt(rothSav), "N/A", fmt(rothCsh), fmt(rothRoi), fmt(rothDiv), fmt(rothInt)), false, false)
+            appendHtmlTableRow(htmlTable, listOf("Taxable Brokerage", fmt(taxSav), fmt(taxBasis), fmt(taxCsh), fmt(taxRoi), fmt(taxDiv), fmt(taxInt)), false, false)
+            appendHtmlTableRow(htmlTable, listOf("DAF", fmt(dafSav), "N/A", "$0.00", fmt(dafRoi), "$0.00", "$0.00"), false, false)
+            appendHtmlTableRow(htmlTable, listOf("Total", fmt(totSav), fmt(taxBasis), fmt(iraCsh + rothCsh + taxCsh), fmt(totRoi), fmt(totDiv), fmt(totInt)), false, true)
+            htmlTable.append("</table>\n")
+            htmlSb.append(htmlTable.toString())
 
-            // Taxes & Expenditures
+            // Income Sources
+            sb.append("## Income Sources\n")
+            htmlSb.append("<h2 style=\"font-family: Arial, sans-serif; font-size: 13pt; color: #555555; margin-top: 14pt; margin-bottom: 6pt;\">Income Sources</h2>\n")
+            
+            val salSelf = getD("salarySelf")
+            val salSp = getD("salarySpouse")
+            val ssSelf = getD("socsecSelf")
+            val ssSp = getD("socsecSpouse")
+            val penSelf = getD("pensionSelf")
+            val penSp = getD("pensionSpouse")
+            val iraDist = getD("ira_distro")
+            val rothDist = getD("roth_distro")
+            val realizedGain = getD("realized_gain")
+            val totSelf = salSelf + ssSelf + penSelf
+            val totSp = salSp + ssSp + penSp
+            val taxableDist = getD("other_distro")
+            val jointTot = iraDist + rothDist + (totDiv + totInt) + taxableDist
+            val grandTot = totSelf + totSp + jointTot
+            
+            data class ColSpec(
+                val header: String,
+                val selfVal: Double,
+                val spouseVal: Double,
+                val jointVal: Double,
+                val totalVal: Double,
+                val isTaxableGain: Boolean = false,
+                val selfGain: Double = 0.0,
+                val spouseGain: Double = 0.0,
+                val jointGain: Double = 0.0,
+                val totalGain: Double = 0.0
+            )
+            
+            val allCols = listOf(
+                ColSpec("Salary", salSelf, salSp, 0.0, salSelf + salSp),
+                ColSpec("Social Security", ssSelf, ssSp, 0.0, ssSelf + ssSp),
+                ColSpec("Pension", penSelf, penSp, 0.0, penSelf + penSp),
+                ColSpec("IRA", 0.0, 0.0, iraDist, iraDist),
+                ColSpec("Roth", 0.0, 0.0, rothDist, rothDist),
+                ColSpec("Taxable Div/Int", 0.0, 0.0, totDiv + totInt, totDiv + totInt),
+                ColSpec("Taxable (Gain)", 0.0, 0.0, taxableDist, taxableDist, isTaxableGain = true, jointGain = realizedGain, totalGain = realizedGain)
+            )
+            
+            val activeCols = allCols.filter { Math.abs(it.totalVal) > 0.001 || Math.abs(it.totalGain) > 0.001 }
+            
+            val formatCell = { col: ColSpec, rowVal: Double, rowGain: Double ->
+                if (col.isTaxableGain) {
+                    "${fmt(rowVal)} (${fmt(rowGain)})"
+                } else {
+                    fmt(rowVal)
+                }
+            }
+            
+            val headers = mutableListOf("Person")
+            for (col in activeCols) {
+                headers.add(col.header)
+            }
+            headers.add("Total")
+            
+            val selfRow = mutableListOf("Self (${Math.round(age)})")
+            for (col in activeCols) {
+                selfRow.add(formatCell(col, col.selfVal, col.selfGain))
+            }
+            selfRow.add(fmt(totSelf))
+            
+            val spouseRow = mutableListOf("Spouse (${Math.round(ageSp)})")
+            for (col in activeCols) {
+                spouseRow.add(formatCell(col, col.spouseVal, col.spouseGain))
+            }
+            spouseRow.add(fmt(totSp))
+            
+            val jointRow = mutableListOf("Joint")
+            for (col in activeCols) {
+                jointRow.add(formatCell(col, col.jointVal, col.jointGain))
+            }
+            jointRow.add(fmt(jointTot))
+            
+            val totalRow = mutableListOf("Total")
+            for (col in activeCols) {
+                totalRow.add(formatCell(col, col.totalVal, col.totalGain))
+            }
+            totalRow.add(fmt(grandTot))
+            
+            sb.append("| ").append(headers.joinToString(" | ")).append(" |\n")
+            sb.append("| :--- | ")
+            sb.append(activeCols.joinToString(" | ") { "---:" })
+            sb.append(" | ---: |\n")
+            
+            sb.append("| ").append(selfRow.joinToString(" | ")).append(" |\n")
+            sb.append("| ").append(spouseRow.joinToString(" | ")).append(" |\n")
+            sb.append("| ").append(jointRow.joinToString(" | ")).append(" |\n")
+            
+            val boldTotalRow = totalRow.mapIndexed { idx, cell -> if (idx == 0) "**$cell**" else "**$cell**" }
+            sb.append("| ").append(boldTotalRow.joinToString(" | ")).append(" |\n\n")
+            
+            val htmlTableInd = StringBuilder()
+            htmlTableInd.append("<table style=\"border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 9pt; margin-bottom: 12pt;\">\n")
+            appendHtmlTableRow(htmlTableInd, headers, true, false)
+            appendHtmlTableRow(htmlTableInd, selfRow, false, false)
+            appendHtmlTableRow(htmlTableInd, spouseRow, false, false)
+            appendHtmlTableRow(htmlTableInd, jointRow, false, false)
+            appendHtmlTableRow(htmlTableInd, totalRow, false, true)
+            htmlTableInd.append("</table>\n")
+            htmlSb.append(htmlTableInd.toString())
+
             val ordRate = getD("fedOrdinaryBracketRate")
             val ordLimit = getD("fedOrdinaryBracketLimit")
             val cgRate = getD("fedCapGainsBracketRate")
@@ -1116,6 +1387,59 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val ordLimitStr = if (ordLimit > 1e15) "Unlimited" else fmt(ordLimit)
             val cgLimitStr = if (cgLimit > 1e15) "Unlimited" else fmt(cgLimit)
             
+            val taxSS = getD("fed_taxable_ss")
+            val stdDed = getD("standard_deduction")
+            val dafContrib = getD("daf_contrib")
+            
+            val ordIncDerivationMd = buildString {
+                append("    * Gross Ordinary Income components:\n")
+                append("      * Salary: **").append(fmt(salSelf + salSp)).append("**\n")
+                append("      * Pension: **").append(fmt(penSelf + penSp)).append("**\n")
+                append("      * Interest: **").append(fmt(totInt)).append("**\n")
+                append("      * IRA Distribution: **").append(fmt(iraDist)).append("**\n")
+                append("      * Taxable Social Security: **").append(fmt(taxSS)).append("** (Gross SS: **").append(fmt(ssSelf + ssSp)).append("**)\n")
+                append("    * Deductions:\n")
+                append("      * Standard Deduction: **-").append(fmt(stdDed)).append("**\n")
+                if (dafContrib > 0.0) {
+                    append("      * DAF Contribution: **-").append(fmt(dafContrib)).append("**\n")
+                }
+            }
+            
+            val combIncDerivationMd = buildString {
+                append("    * Components:\n")
+                append("      * Taxable Ordinary Income: **").append(fmt(ordInc)).append("**\n")
+                append("      * Taxable Capital Gains: **").append(fmt(realizedGain)).append("**\n")
+                append("      * Taxable Dividends: **").append(fmt(totDiv)).append("**\n")
+            }
+            
+            val ordIncDerivationHtml = buildString {
+                append("<ul style=\"padding-left: 20px; font-size: 9pt;\">")
+                append("<li>Gross Ordinary Income components:")
+                append("<ul style=\"padding-left: 20px;\">")
+                append("<li>Salary: <strong>").append(fmt(salSelf + salSp)).append("</strong></li>")
+                append("<li>Pension: <strong>").append(fmt(penSelf + penSp)).append("</strong></li>")
+                append("<li>Interest: <strong>").append(fmt(totInt)).append("</strong></li>")
+                append("<li>IRA Distribution: <strong>").append(fmt(iraDist)).append("</strong></li>")
+                append("<li>Taxable Social Security: <strong>").append(fmt(taxSS)).append("</strong> (Gross SS: <strong>").append(fmt(ssSelf + ssSp)).append("</strong>)</li>")
+                append("</ul></li>")
+                append("<li>Deductions:")
+                append("<ul style=\"padding-left: 20px;\">")
+                append("<li>Standard Deduction: <strong>-").append(fmt(stdDed)).append("</strong></li>")
+                if (dafContrib > 0.0) {
+                    append("<li>DAF Contribution: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
+                }
+                append("</ul></li>")
+                append("</ul>")
+            }
+            
+            val combIncDerivationHtml = buildString {
+                append("<ul style=\"padding-left: 20px; font-size: 9pt;\">")
+                append("<li>Taxable Ordinary Income: <strong>").append(fmt(ordInc)).append("</strong></li>")
+                append("<li>Taxable Capital Gains: <strong>").append(fmt(realizedGain)).append("</strong></li>")
+                append("<li>Taxable Dividends: <strong>").append(fmt(totDiv)).append("</strong></li>")
+                append("</ul>")
+            }
+
             sb.append("## Tax & Expense Information\n")
             sb.append("* **Total Taxes**: ").append(fmt(r["taxes"]))
                 .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
@@ -1125,51 +1449,188 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             sb.append("* **Federal Ordinary Income Tax Bracket**:\n")
             sb.append("  * Active Bracket Rate: **").append(ordRateStr).append("**\n")
             sb.append("  * Taxable Ordinary Income: **").append(fmt(ordInc)).append("**\n")
+            sb.append(ordIncDerivationMd)
             sb.append("  * Bracket Income Limit: up to **").append(ordLimitStr).append("**\n")
             sb.append("* **Federal Capital Gains Tax Bracket**:\n")
             sb.append("  * Active Bracket Rate: **").append(cgRateStr).append("**\n")
             sb.append("  * Combined Taxable Income: **").append(fmt(totInc)).append("**\n")
+            sb.append(combIncDerivationMd)
             sb.append("  * Bracket Income Limit: up to **").append(cgLimitStr).append("**\n")
             sb.append("* **Expenditures**:\n")
             sb.append("  * Housing (Mortgage): ").append(fmt(r["housing"])).append("\n")
             sb.append("  * Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("\n")
             sb.append("  * Other spending: ").append(fmt(r["other"])).append("\n\n")
+            
+            htmlSb.append("<h2 style=\"font-family: Arial, sans-serif; font-size: 13pt; color: #555555; margin-top: 14pt; margin-bottom: 6pt;\">Tax & Expense Information</h2>\n")
+            htmlSb.append("<ul style=\"font-family: Arial, sans-serif; font-size: 10pt; line-height: 1.4; margin-bottom: 12pt; padding-left: 20px;\">\n")
+            htmlSb.append("<li><strong>Total Taxes</strong>: ").append(fmt(r["taxes"]))
+                .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
+                .append(", State: ").append(fmt(r["state_income_tax"]))
+                .append(", Payroll: ").append(fmt(r["payroll_tax"]))
+                .append(", Property: ").append(fmt(r["property_tax"])).append(")</li>\n")
+            htmlSb.append("<li><strong>Federal Ordinary Income Tax Bracket</strong>:\n")
+            htmlSb.append("<ul style=\"padding-left: 20px;\">")
+            htmlSb.append("<li>Active Bracket Rate: <strong>").append(ordRateStr).append("</strong></li>\n")
+            htmlSb.append("<li>Taxable Ordinary Income: <strong>").append(fmt(ordInc)).append("</strong>")
+            htmlSb.append(ordIncDerivationHtml)
+            htmlSb.append("</li>\n")
+            htmlSb.append("<li>Bracket Income Limit: up to <strong>").append(ordLimitStr).append("</strong></li>\n")
+            htmlSb.append("</ul></li>\n")
+            htmlSb.append("<li><strong>Federal Capital Gains Tax Bracket</strong>:\n")
+            htmlSb.append("<ul style=\"padding-left: 20px;\">")
+            htmlSb.append("<li>Active Bracket Rate: <strong>").append(cgRateStr).append("</strong></li>\n")
+            htmlSb.append("<li>Combined Taxable Income: <strong>").append(fmt(totInc)).append("</strong>")
+            htmlSb.append(combIncDerivationHtml)
+            htmlSb.append("</li>\n")
+            htmlSb.append("<li>Bracket Income Limit: up to <strong>").append(cgLimitStr).append("</strong></li>\n")
+            htmlSb.append("</ul></li>\n")
+            htmlSb.append("<li><strong>Expenditures</strong>:\n")
+            htmlSb.append("<ul style=\"padding-left: 20px;\">")
+            htmlSb.append("<li>Housing (Mortgage): ").append(fmt(r["housing"])).append("</li>\n")
+            htmlSb.append("<li>Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("</li>\n")
+            htmlSb.append("<li>Other spending: ").append(fmt(r["other"])).append("</li>\n")
+            htmlSb.append("</ul></li>\n")
+            htmlSb.append("</ul>\n")
 
-            // Individual Info Table
-            sb.append("## Individual Financial Information\n")
-            val salSelf = getD("salarySelf")
-            val salSp = getD("salarySpouse")
-            val ssSelf = getD("socsecSelf")
-            val ssSp = getD("socsecSpouse")
-            val penSelf = getD("pensionSelf")
-            val penSp = getD("pensionSpouse")
-            
-            val totSelf = salSelf + ssSelf + penSelf
-            val totSp = salSp + ssSp + penSp
-            
-            sb.append("| Person (Age) | Salary | Social Security | Pension | Total |\n")
-            sb.append("| :--- | :--- | :--- | :--- | :--- |\n")
-            sb.append("| Self (").append(Math.round(age)).append(") | ").append(fmt(salSelf)).append(" | ").append(fmt(ssSelf)).append(" | ").append(fmt(penSelf)).append(" | ").append(fmt(totSelf)).append(" |\n")
-            sb.append("| Spouse (").append(Math.round(ageSp)).append(") | ").append(fmt(salSp)).append(" | ").append(fmt(ssSp)).append(" | ").append(fmt(penSp)).append(" | ").append(fmt(totSp)).append(" |\n")
-            sb.append("| **Total** | **").append(fmt(salSelf + salSp)).append("** | **").append(fmt(ssSelf + ssSp)).append("** | **").append(fmt(penSelf + penSp)).append("** | **").append(fmt(totSelf + totSp)).append("** |\n\n")
-            
-            // Action plan and distributions
+
             sb.append("## Action Plan & Distributions\n")
+            htmlSb.append("<h2 style=\"font-family: Arial, sans-serif; font-size: 13pt; color: #555555; margin-top: 14pt; margin-bottom: 6pt;\">Action Plan & Distributions</h2>\n")
+            
             val logs = r["action_logs"] as? List<String> ?: emptyList()
-            if (logs.isEmpty()) {
-                sb.append("No stock transactions or rebalancing events occurred this year.\n")
-            } else {
-                for (log in logs) {
-                    sb.append("* ").append(log).append("\n")
+            val actionRows = mutableListOf<ActionRow>()
+            for (log in logs) {
+                var row: ActionRow? = null
+                var match = sellRegex.matchEntire(log)
+                if (match != null) {
+                    val rawAmt = match.groupValues[1]
+                    val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                    val asset = match.groupValues[2].trim()
+                    val rawGain = match.groupValues[4]
+                    val gain = if (rawGain.startsWith("-")) "-$" + rawGain.substring(1) else "$" + rawGain
+                    val purpose = match.groupValues[5].trim().replaceFirstChar { it.uppercase() }
+                    row = ActionRow("Sell", asset, amount, gain, purpose)
+                } else {
+                    match = convertRegex.matchEntire(log)
+                    if (match != null) {
+                        val rawAmt = match.groupValues[1]
+                        val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                        val fromAsset = match.groupValues[2].trim()
+                        val toAsset = match.groupValues[3].trim()
+                        val assetName = if (toAsset.lowercase().contains("cash")) "Roth Cash" else "Roth Stock"
+                        row = ActionRow("Convert", assetName, amount, "N/A", "Roth conversion from $fromAsset")
+                    } else {
+                        match = donateRegex.matchEntire(log)
+                        if (match != null) {
+                            val rawAmt = match.groupValues[1]
+                            val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                            val asset = match.groupValues[2].trim()
+                            val purpose = "Donate directly to " + match.groupValues[4].trim()
+                            row = ActionRow("Donate", asset, amount, "N/A", purpose)
+                        } else {
+                            match = purchaseRegex.matchEntire(log)
+                            if (match != null) {
+                                val rawAmt = match.groupValues[1]
+                                val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                val asset = match.groupValues[2].trim()
+                                val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
+                                row = ActionRow("Buy", asset, amount, "N/A", purpose)
+                            } else {
+                                match = withdrawRegex.matchEntire(log)
+                                if (match != null) {
+                                    val rawAmt = match.groupValues[1]
+                                    val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                    val asset = match.groupValues[2].trim()
+                                    val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
+                                    row = ActionRow("Withdraw", asset, amount, "N/A", purpose)
+                                }
+                            }
+                        }
+                    }
                 }
+                if (row != null) actionRows.add(row) else actionRows.add(ActionRow("Info", "N/A", "N/A", "N/A", log))
             }
-            sb.append("\n<div style=\"page-break-after: always;\"></div>\n\n")
+            
+            if (actionRows.isEmpty()) {
+                sb.append("No stock transactions or rebalancing events occurred this year.\n")
+                htmlSb.append("<p style=\"font-family: Arial, sans-serif; font-size: 10pt;\">No stock transactions or rebalancing events occurred this year.</p>\n")
+            } else {
+                sb.append("| Transaction Type | Asset / Stock Name | Amount | Realized Gain | Purpose |\n")
+                sb.append("| :--- | :--- | :--- | :--- | :--- |\n")
+                for (row in actionRows) {
+                    sb.append("| ").append(row.type).append(" | ").append(row.asset).append(" | ").append(row.amount).append(" | ").append(row.realizedGain).append(" | ").append(row.purpose).append(" |\n")
+                }
+                sb.append("\n")
+                
+                val htmlTableAct = StringBuilder()
+                htmlTableAct.append("<table style=\"border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 10pt; margin-bottom: 12pt;\">\n")
+                appendHtmlTableRow(htmlTableAct, listOf("Transaction Type", "Asset / Stock Name", "Amount", "Realized Gain", "Purpose"), true, false)
+                for (row in actionRows) {
+                    val tdStyle = "padding: 6px 8px; border: 1px solid #cccccc;"
+                    htmlTableAct.append("<tr>")
+                    htmlTableAct.append("<td style=\"text-align: left; ").append(tdStyle).append("\">").append(row.type).append("</td>")
+                    htmlTableAct.append("<td style=\"text-align: left; ").append(tdStyle).append("\">").append(row.asset).append("</td>")
+                    htmlTableAct.append("<td style=\"text-align: right; ").append(tdStyle).append("\">").append(row.amount).append("</td>")
+                    htmlTableAct.append("<td style=\"text-align: right; ").append(tdStyle).append("\">").append(row.realizedGain).append("</td>")
+                    htmlTableAct.append("<td style=\"text-align: left; ").append(tdStyle).append("\">").append(row.purpose).append("</td>")
+                    htmlTableAct.append("</tr>\n")
+                }
+                htmlTableAct.append("</table>\n")
+                htmlSb.append(htmlTableAct.toString())
+            }
+            
+            if (i < currentResults.size - 1) {
+                sb.append("\n<div style=\"page-break-after: always;\"></div>\n\n")
+            }
+        }
+        val htmlDoc = "<html><body style=\"font-family: Arial, sans-serif; font-size: 10pt; color: #333333; line-height: 1.4;\">" + htmlSb.toString() + "</body></html>"
+        
+        try {
+            val selection = HtmlSelection(htmlDoc, sb.toString())
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+            JOptionPane.showMessageDialog(this, "Annual Financial Instruction Sheet exported successfully and copied to clipboard!", "Success", JOptionPane.INFORMATION_MESSAGE)
+        } catch (e: Exception) {
+            JOptionPane.showMessageDialog(this, "Failed to copy to clipboard: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
+        }
+    }
+
+    private fun copyStockLotsForSelectedRow() {
+        val selectedRow = resultTable.selectedRow
+        if (selectedRow < 0 || selectedRow >= currentResults.size) {
+            JOptionPane.showMessageDialog(this, "Please select a year in the table first.", "Info", JOptionPane.WARNING_MESSAGE)
+            return
+        }
+        
+        val r = currentResults[selectedRow]
+        val yr = r["year"]?.toString() ?: "Unknown"
+        
+        @Suppress("UNCHECKED_CAST")
+        val lots = r["stock_lots"] as? List<StockLot> ?: emptyList()
+        if (lots.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No taxable stock lots found for Year $yr.", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        }
+        
+        val sortedLots = lots.sortedByDescending { it.basisRatio }
+        
+        val sb = java.lang.StringBuilder()
+        sb.append("Name\tCurrent Value\tBasis\tGain\tPercent Gain/Loss\n")
+        
+        val df = DecimalFormat("$#,##0.00")
+        val pf = DecimalFormat("0.00%")
+        for (lot in sortedLots) {
+            val gain = lot.currentVal - lot.costBasis
+            val pct = if (lot.costBasis > 0.0) gain / lot.costBasis else 0.0
+            sb.append(lot.name).append("\t")
+              .append(df.format(lot.currentVal)).append("\t")
+              .append(df.format(lot.costBasis)).append("\t")
+              .append(df.format(gain)).append("\t")
+              .append(pf.format(pct)).append("\n")
         }
         
         try {
             val selection = java.awt.datatransfer.StringSelection(sb.toString())
-            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, selection)
-            JOptionPane.showMessageDialog(this, "Annual Financial Instruction Sheet exported successfully and copied to clipboard!", "Success", JOptionPane.INFORMATION_MESSAGE)
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+            JOptionPane.showMessageDialog(this, "Stock lots for Year $yr successfully copied to clipboard in spreadsheet format!", "Success", JOptionPane.INFORMATION_MESSAGE)
         } catch (e: Exception) {
             JOptionPane.showMessageDialog(this, "Failed to copy to clipboard: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
         }
@@ -1634,5 +2095,34 @@ class FileDropHandler(private val onDrop: (File) -> Unit) : TransferHandler() {
             e.printStackTrace()
         }
         return false
+    }
+}
+
+data class ActionRow(
+    val type: String,
+    val asset: String,
+    val amount: String,
+    val realizedGain: String,
+    val purpose: String
+)
+
+class HtmlSelection(private val html: String, private val plainText: String) : java.awt.datatransfer.Transferable {
+    companion object {
+        val HTML_FLAVOR = java.awt.datatransfer.DataFlavor("text/html;class=java.lang.String")
+    }
+
+    private val flavors = arrayOf(HTML_FLAVOR, java.awt.datatransfer.DataFlavor.stringFlavor)
+
+    override fun getTransferDataFlavors(): Array<java.awt.datatransfer.DataFlavor> = flavors
+
+    override fun isDataFlavorSupported(flavor: java.awt.datatransfer.DataFlavor): Boolean =
+        flavors.any { it.equals(flavor) }
+
+    override fun getTransferData(flavor: java.awt.datatransfer.DataFlavor): Any {
+        return when {
+            flavor.equals(HTML_FLAVOR) -> html
+            flavor.equals(java.awt.datatransfer.DataFlavor.stringFlavor) -> plainText
+            else -> throw java.awt.datatransfer.UnsupportedFlavorException(flavor)
+        }
     }
 }

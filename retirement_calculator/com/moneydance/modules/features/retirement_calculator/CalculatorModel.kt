@@ -163,6 +163,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var taxableCashEnd: Double = 0.0
     var taxableCostBasisEnd: Double = 0.0
     var taxableLotsEnd = mutableListOf<StockLot>()
+    var taxableLotsStart = mutableListOf<StockLot>()
     var dafSavingsEnd: Double = 0.0
     val actionLogs = mutableListOf<String>()
 
@@ -171,6 +172,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var taxableDistribution: Double = 0.0
     var dafDistribution: Double = 0.0
     var dafContribution: Double = 0.0
+    var rothConversion: Double = 0.0
+    var realizedGain: Double = 0.0
+    var fedTaxableSocialSecurity: Double = 0.0
 
     var salarySelf: Double = 0.0
     var salarySpouse: Double = 0.0
@@ -721,8 +725,10 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             max(0.0, taxableDistribution - taxableCashPre)
         }
         val finalRealizedGain = simulateStockSale(finalStockSold)
+        realizedGain = finalRealizedGain
         val finalResult = calculateRetirementTax(iraDistribution, finalRealizedGain)
         
+        fedTaxableSocialSecurity = finalResult.taxableSocialSecurity
         fedOrdinaryBracketRate = finalResult.fedOrdinaryBracketRate
         fedOrdinaryBracketLimit = finalResult.fedOrdinaryBracketLimit
         fedCapGainsBracketRate = finalResult.fedCapGainsBracketRate
@@ -794,47 +800,93 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         if (iraDistribution > 0.0) {
             val cashDep = if (investReturnPct < 0.0) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
             val nonCashDep = iraDistribution - cashDep
-            if (cashDep > 0.0) {
-                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from IRA cash to cover expenses.")
+            
+            val convCash = min(rothConversion, cashDep)
+            val convStock = rothConversion - convCash
+            
+            val spendCash = cashDep - convCash
+            val spendStock = nonCashDep - convStock
+            
+            if (convCash > 0.01) {
+                actionLogs.add("Convert \$${String.format("%,.2f", convCash)} from IRA cash to Roth cash.")
             }
-            if (nonCashDep > 0.0) {
-                actionLogs.add("Withdraw \$${String.format("%,.2f", nonCashDep)} from IRA stock (non-cash) to cover expenses or satisfy RMD.")
+            if (convStock > 0.01) {
+                actionLogs.add("Convert \$${String.format("%,.2f", convStock)} from IRA stock to Roth stock.")
+            }
+            if (spendCash > 0.01) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", spendCash)} from IRA cash to cover expenses.")
+            }
+            if (spendStock > 0.01) {
+                actionLogs.add("Withdraw \$${String.format("%,.2f", spendStock)} from IRA stock (non-cash) to cover expenses or satisfy RMD.")
             }
         }
         
-        val (rothC, rothN) = applyDist(rothCashPre, rothNonCashPre, rothDistribution)
-        rothCashEnd = rothC
-        rothSavingsEnd = rothC + rothN
-        if (rothDistribution > 0.0) {
-            val cashDep = if (investReturnPct < 0.0) min(rothCashPre, rothDistribution) else max(0.0, rothDistribution - min(rothNonCashPre, rothDistribution))
-            val nonCashDep = rothDistribution - cashDep
-            if (cashDep > 0.0) {
-                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Roth cash to cover expenses.")
-            }
-            if (nonCashDep > 0.0) {
-                actionLogs.add("Withdraw \$${String.format("%,.2f", nonCashDep)} from Roth stock (non-cash) to cover expenses.")
+        val rothDeposit = -rothDistribution
+        if (rothDeposit > 0.0) {
+            val convCash = min(rothConversion, if (iraDistribution > 0.0) {
+                if (investReturnPct < 0.0) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
+            } else 0.0)
+            
+            rothCashEnd = rothCashPre + convCash
+            rothSavingsEnd = rothCashPre + rothNonCashPre + rothDeposit
+        } else {
+            val (rothC, rothN) = applyDist(rothCashPre, rothNonCashPre, rothDistribution)
+            rothCashEnd = rothC
+            rothSavingsEnd = rothC + rothN
+            if (rothDistribution > 0.0) {
+                val cashDep = if (investReturnPct < 0.0) min(rothCashPre, rothDistribution) else max(0.0, rothDistribution - min(rothNonCashPre, rothDistribution))
+                val nonCashDep = rothDistribution - cashDep
+                if (cashDep > 0.0) {
+                    actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Roth cash to cover expenses.")
+                }
+                if (nonCashDep > 0.0) {
+                    actionLogs.add("Withdraw \$${String.format("%,.2f", nonCashDep)} from Roth stock (non-cash) to cover expenses.")
+                }
             }
         }
         
         val (taxC, taxN) = applyDist(taxableCashPre, taxableNonCashPre, taxableDistribution)
         taxableCashEnd = taxC
         taxableSavingsEnd = taxC + taxN
-        if (taxableDistribution > 0.0) {
-            val cashDep = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
-            if (cashDep > 0.0) {
-                actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Taxable cash to cover expenses.")
-            }
-        }
         
         val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
         
-        // 1. Rebalancing stock transaction (start-of-year)
         val rebalBuy = taxableCash - taxCS
         val rebalBuyWithRoi = rebalBuy * (1.0 + investReturnPct)
-        if (rebalBuy > 0.01) {
+        
+        val taxableCashWithdrawn = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
+        val taxableStockWithdrawn = taxableDistribution - taxableCashWithdrawn
+        
+        var netRebalBuy = 0.0
+        var netRebalBuyWithRoi = 0.0
+        var netStockWithdrawn = 0.0
+        
+        if (rebalBuy > 0.01 && taxableStockWithdrawn > 0.01) {
+            if (rebalBuyWithRoi > taxableStockWithdrawn) {
+                netRebalBuyWithRoi = rebalBuyWithRoi - taxableStockWithdrawn
+                netRebalBuy = netRebalBuyWithRoi / (1.0 + investReturnPct)
+                netStockWithdrawn = 0.0
+            } else {
+                netRebalBuy = 0.0
+                netRebalBuyWithRoi = 0.0
+                netStockWithdrawn = taxableStockWithdrawn - rebalBuyWithRoi
+            }
+        } else {
+            netRebalBuy = max(0.0, rebalBuy)
+            netRebalBuyWithRoi = max(0.0, rebalBuyWithRoi)
+            netStockWithdrawn = max(0.0, taxableStockWithdrawn)
+        }
+
+        val actualCashWithdrawn = taxableDistribution - netStockWithdrawn
+        if (actualCashWithdrawn > 0.01) {
+            actionLogs.add("Withdraw \$${String.format("%,.2f", actualCashWithdrawn)} from Taxable cash to cover expenses.")
+        }
+
+        // 1. Rebalancing stock transaction (start-of-year)
+        if (netRebalBuy > 0.01) {
             val lotName = "Stock purchased in $year"
-            actionLogs.add("Purchase \$${String.format("%,.2f", rebalBuy)} of stock named '$lotName' to reinvest cash.")
-            activeLots.add(StockLot(name = lotName, costBasis = rebalBuyWithRoi, currentVal = rebalBuyWithRoi))
+            actionLogs.add("Purchase \$${String.format("%,.2f", netRebalBuy)} of stock named '$lotName' to reinvest cash.")
+            activeLots.add(StockLot(name = lotName, costBasis = netRebalBuy, currentVal = netRebalBuyWithRoi))
         } else if (rebalBuy < -0.01) {
             val rebalSellWithRoi = -rebalBuyWithRoi
             activeLots.sortByDescending { it.basisRatio }
@@ -854,6 +906,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             }
         }
         
+        // Capture year-start stock lots right after rebalancing (before spending/donations)
+        taxableLotsStart = activeLots.filter { it.currentVal > 0.01 }.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
+        
         // 2. DAF Donation (most appreciated / lowest ratio first)
         if (dafContribution > 0.0) {
             activeLots.sortBy { it.basisRatio }
@@ -872,11 +927,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         
         // 3. Taxable distribution (spending) stock sale
-        val taxableCashWithdrawn = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
-        val taxableStockWithdrawn = taxableDistribution - taxableCashWithdrawn
-        if (taxableStockWithdrawn > 0.01) {
+        if (netStockWithdrawn > 0.01) {
             activeLots.sortByDescending { it.basisRatio }
-            var remainingSale = taxableStockWithdrawn
+            var remainingSale = netStockWithdrawn
             for (lot in activeLots) {
                 if (remainingSale <= 0.0) break
                 val toDeplete = min(lot.currentVal, remainingSale)
@@ -1101,6 +1154,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     }
 
     private fun fundSavings(surplusVal: Double) {
+        rothConversion = 0.0
         var surplus = surplusVal
         
         var iraTarget = min(salarySelf * 0.06, surplus)
@@ -1132,6 +1186,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             val rothFromIRA = min(iraDistribution - rmdVal, surplus)
             rothDistribution -= rothFromIRA
             surplus -= rothFromIRA
+            rothConversion = rothFromIRA
         }
 
         if (rmdVal > 0.0 && surplus > 0.0) {
@@ -1356,6 +1411,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["ira_distro"] = iraDistribution
         result["roth_distro"] = rothDistribution
         result["other_distro"] = taxableDistribution
+        result["realized_gain"] = realizedGain
         result["daf_distro"] = dafDistribution
         result["daf_contrib"] = dafContribution
         result["rmd"] = suggestRmd()
@@ -1370,8 +1426,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["fedCapGainsBracketLimit"] = fedCapGainsBracketLimit
         result["fedTaxableOrdinaryIncome"] = fedTaxableOrdinaryIncome
         result["fedTotalTaxableIncome"] = fedTotalTaxableIncome
+        result["standard_deduction"] = standardDeduction
+        result["fed_taxable_ss"] = fedTaxableSocialSecurity
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
+        result["stock_lots"] = taxableLotsStart.map { StockLot(it.name, it.costBasis, it.currentVal) }
         return result
     }
 }
