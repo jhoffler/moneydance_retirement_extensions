@@ -582,100 +582,161 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val rmdValue = min(suggestRmd(), maxIra)
         val fixedCash = getOtherIncome() + socSecSelf + socSecSpouse
         
+        val isPreRmdRetirement = (ageSelf >= retirementAgeSelf || ageSpouse >= retirementAgeSpouse) && suggestRmd() < 0.01
+
         var currentIRA = rmdValue
-        var currentBrokerageSale = max(0.0, estimatedGrossNeeded - rmdValue - fixedCash)
-        currentBrokerageSale = min(currentBrokerageSale, maxTaxable)
-        var totalTax = 0.0
-        var netCash = 0.0
+        var currentBrokerageSale = 0.0
+        var surplus = 0.0
 
-        val loopMaxIra = min(estimatedGrossNeeded, maxIra)
-        var ira = rmdValue
-        while (ira <= loopMaxIra) {
-            var brokerageNeeded = max(0.0, estimatedGrossNeeded - ira - fixedCash)
-            brokerageNeeded = min(brokerageNeeded, maxTaxable)
-            val stockSold = if (investReturnPct >= 0.0) {
-                min(taxableNonCashPre, brokerageNeeded)
-            } else {
-                max(0.0, brokerageNeeded - taxableCashPre)
-            }
-            val realizedGain = simulateStockSale(stockSold)
-
-            val result = calculateRetirementTax(ira, realizedGain)
-
-            if (result.capitalGainsTax == 0.0 || ira == rmdValue) {
-                currentIRA = ira
-                currentBrokerageSale = brokerageNeeded
-                totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
-                netCash = (ira + currentBrokerageSale + fixedCash) - totalTax
-                taxLimitReason = null
-            } else if (salarySelf + salarySpouse > 0.0) {
-                currentIRA = ira
-                currentBrokerageSale = brokerageNeeded
-                totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
-                netCash = (ira + currentBrokerageSale + fixedCash) - totalTax
-                taxLimitReason = "0% Capital Gains Bracket"
-                break
-            } else if (result.taxableOrdinaryIncome > 0.0) {
-                taxLimitReason = "0% Income Tax Bracket"
-                break
-            } else {
-                if (taxLimitReason == null) taxLimitReason = "0% Capital Gains Bracket"
-            }
-            ira += 100.0
-        }
-
-        if (currentIRA >= loopMaxIra - 100.0) {
-            taxLimitReason = null
-        }
-
-        if (rmdValue > estimatedGrossNeeded) {
-            currentIRA = rmdValue
-            currentBrokerageSale = 0.0
-            val result = calculateRetirementTax(rmdValue, 0.0)
-            totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
-            netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
-        }
-
-        var iterations = 0
-        while (netCash < targetNetCash && currentBrokerageSale < maxTaxable) {
-            var additionalNeeded = targetNetCash - netCash
-            if (currentBrokerageSale + additionalNeeded > maxTaxable) {
-                additionalNeeded = maxTaxable - currentBrokerageSale
-            }
-
-            currentBrokerageSale += additionalNeeded
-            val stockSold = if (investReturnPct >= 0.0) {
-                min(taxableNonCashPre, currentBrokerageSale)
-            } else {
-                max(0.0, currentBrokerageSale - taxableCashPre)
-            }
-            val realizedGain = simulateStockSale(stockSold)
-            val result = calculateRetirementTax(currentIRA, realizedGain)
-            totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
-            netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
-
-            iterations++
-            if (iterations > 20) break
-        }
-
-        if (netCash < targetNetCash) {
-            val additionalNeeded = targetNetCash - netCash
-            val rothPull = min(additionalNeeded, maxRoth)
-            rothDistribution += rothPull
-        } else {
-            rothDistribution = 0.0
-        }
-
-        if (netCash + rothDistribution < targetNetCash && currentIRA < maxIra) {
-            taxLimitReason = null
-            var iraIterations = 0
-            val adjustedTarget = targetNetCash - rothDistribution
-            while (netCash < adjustedTarget && currentIRA < maxIra) {
-                var additionalNeeded = adjustedTarget - netCash
-                if (currentIRA + additionalNeeded > maxIra) {
-                    additionalNeeded = maxIra - currentIRA
+        if (isPreRmdRetirement) {
+            val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
+            val unusedDeduction = max(0.0, standardDeduction - guaranteedOrdinary)
+            val bracketCeiling = CAP_GAINS_RATES_FED[0].maxIncome * inflationAdjustmentFactor
+            
+            var taxableDistributionVal = 0.0
+            var iraDistributionVal = 0.0
+            var rothConversionVal = 0.0
+            var totalTax = 0.0
+            var netCash = 0.0
+            
+            for (iter in 0 until 10) {
+                val currentShortfall = targetNetCash + totalTax - fixedCash
+                if (currentShortfall <= 0.0) {
+                    taxableDistributionVal = 0.0
+                    iraDistributionVal = 0.0
+                    
+                    val netCapitalGains = 0.0
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary - standardDeduction)
+                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
+                    rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
+                    val maxConvert = max(0.0, maxIra)
+                    rothConversionVal = min(maxConvert, rothConversionVal)
+                    
+                    val result = calculateRetirementTax(rothConversionVal, netCapitalGains)
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = fixedCash - totalTax
+                    surplus = max(0.0, netCash - targetNetCash)
+                    break
                 }
-                currentIRA += additionalNeeded
+                
+                val simulatedGain = simulateStockSale(currentShortfall)
+                val isNetLoss = simulatedGain < 0.0
+                
+                if (isNetLoss) {
+                    taxableDistributionVal = min(maxTaxable, currentShortfall)
+                    iraDistributionVal = 0.0
+                    if (taxableDistributionVal < currentShortfall) {
+                        iraDistributionVal = min(maxIra, currentShortfall - taxableDistributionVal)
+                    }
+                    
+                    val netCapitalGains = simulateStockSale(taxableDistributionVal)
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - standardDeduction)
+                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
+                    rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
+                    val maxConvert = max(0.0, maxIra - iraDistributionVal)
+                    rothConversionVal = min(maxConvert, rothConversionVal)
+                    
+                    val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
+                    surplus = max(0.0, netCash - targetNetCash)
+                } else {
+                    val taxFreeIraWithdrawal = min(currentShortfall, unusedDeduction)
+                    val remainingShortfall = currentShortfall - taxFreeIraWithdrawal
+                    taxableDistributionVal = min(maxTaxable, remainingShortfall)
+                    val taxableIraWithdrawal = min(maxIra - taxFreeIraWithdrawal, max(0.0, remainingShortfall - taxableDistributionVal))
+                    iraDistributionVal = taxFreeIraWithdrawal + taxableIraWithdrawal
+                    
+                    val netCapitalGains = simulateStockSale(taxableDistributionVal)
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - standardDeduction)
+                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
+                    rothConversionVal = max(0.0, conversionRoom)
+                    val maxConvert = max(0.0, maxIra - iraDistributionVal)
+                    rothConversionVal = min(maxConvert, rothConversionVal)
+                    
+                    val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
+                    surplus = max(0.0, netCash - targetNetCash)
+                }
+            }
+            
+            if (netCash < targetNetCash) {
+                val additionalNeeded = targetNetCash - netCash
+                val rothPull = min(additionalNeeded, maxRoth)
+                rothDistribution = rothPull
+                netCash += rothPull
+            } else {
+                rothDistribution = 0.0
+            }
+            
+            currentIRA = iraDistributionVal
+            currentBrokerageSale = taxableDistributionVal
+            rothConversion = rothConversionVal
+            iraDistribution = iraDistributionVal
+            taxableDistribution = taxableDistributionVal
+        } else {
+            currentBrokerageSale = max(0.0, estimatedGrossNeeded - rmdValue - fixedCash)
+            currentBrokerageSale = min(currentBrokerageSale, maxTaxable)
+            var totalTax = 0.0
+            var netCash = 0.0
+
+            val loopMaxIra = min(estimatedGrossNeeded, maxIra)
+            var ira = rmdValue
+            while (ira <= loopMaxIra) {
+                var brokerageNeeded = max(0.0, estimatedGrossNeeded - ira - fixedCash)
+                brokerageNeeded = min(brokerageNeeded, maxTaxable)
+                val stockSold = if (investReturnPct >= 0.0) {
+                    min(taxableNonCashPre, brokerageNeeded)
+                } else {
+                    max(0.0, brokerageNeeded - taxableCashPre)
+                }
+                val realizedGain = simulateStockSale(stockSold)
+
+                val result = calculateRetirementTax(ira, realizedGain)
+
+                if (result.capitalGainsTax == 0.0 || ira == rmdValue) {
+                    currentIRA = ira
+                    currentBrokerageSale = brokerageNeeded
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = (ira + currentBrokerageSale + fixedCash) - totalTax
+                    taxLimitReason = null
+                } else if (salarySelf + salarySpouse > 0.0) {
+                    currentIRA = ira
+                    currentBrokerageSale = brokerageNeeded
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = (ira + currentBrokerageSale + fixedCash) - totalTax
+                    taxLimitReason = "0% Capital Gains Bracket"
+                    break
+                } else if (result.taxableOrdinaryIncome > 0.0) {
+                    taxLimitReason = "0% Income Tax Bracket"
+                    break
+                } else {
+                    if (taxLimitReason == null) taxLimitReason = "0% Capital Gains Bracket"
+                }
+                ira += 100.0
+            }
+
+            if (currentIRA >= loopMaxIra - 100.0) {
+                taxLimitReason = null
+            }
+
+            if (rmdValue > estimatedGrossNeeded) {
+                currentIRA = rmdValue
+                currentBrokerageSale = 0.0
+                val result = calculateRetirementTax(rmdValue, 0.0)
+                totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
+            }
+
+            var iterations = 0
+            while (netCash < targetNetCash && currentBrokerageSale < maxTaxable) {
+                var additionalNeeded = targetNetCash - netCash
+                if (currentBrokerageSale + additionalNeeded > maxTaxable) {
+                    additionalNeeded = maxTaxable - currentBrokerageSale
+                }
+
+                currentBrokerageSale += additionalNeeded
                 val stockSold = if (investReturnPct >= 0.0) {
                     min(taxableNonCashPre, currentBrokerageSale)
                 } else {
@@ -686,46 +747,78 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                 netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
 
-                iraIterations++
-                if (iraIterations > 20) break
+                iterations++
+                if (iterations > 20) break
             }
-        }
 
-        rothDistribution = min(rothDistribution, maxRoth)
-        currentIRA = min(currentIRA, maxIra)
-
-        if (netCash + rothDistribution < targetNetCash) {
-            val additionalNeeded = targetNetCash - (netCash + rothDistribution)
-            currentBrokerageSale += additionalNeeded
-            netCash += additionalNeeded
-        }
-
-        iraDistribution = currentIRA
-        taxableDistribution = currentBrokerageSale
-
-        var surplus = 0.0
-        dafContribution = 0.0
-
-        for (iter in 0 until 5) {
-            val stockSold = if (investReturnPct >= 0.0) {
-                min(taxableNonCashPre, taxableDistribution)
+            if (netCash < targetNetCash) {
+                val additionalNeeded = targetNetCash - netCash
+                val rothPull = min(additionalNeeded, maxRoth)
+                rothDistribution += rothPull
             } else {
-                max(0.0, taxableDistribution - taxableCashPre)
+                rothDistribution = 0.0
             }
-            val realizedGain = simulateStockSale(stockSold)
-            val result = calculateRetirementTax(iraDistribution, realizedGain)
-            totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
-            netCash = (iraDistribution + taxableDistribution + fixedCash) - totalTax
-            surplus = netCash + rothDistribution - targetNetCash
 
-            if (suggestRmd() > 0.0 && surplus > 0.0) {
-                dafContribution = surplus * dafExcessPct
-            } else {
-                dafContribution = 0.0
-                break
+            if (netCash + rothDistribution < targetNetCash && currentIRA < maxIra) {
+                taxLimitReason = null
+                var iraIterations = 0
+                val adjustedTarget = targetNetCash - rothDistribution
+                while (netCash < adjustedTarget && currentIRA < maxIra) {
+                    var additionalNeeded = adjustedTarget - netCash
+                    if (currentIRA + additionalNeeded > maxIra) {
+                        additionalNeeded = maxIra - currentIRA
+                    }
+                    currentIRA += additionalNeeded
+                    val stockSold = if (investReturnPct >= 0.0) {
+                        min(taxableNonCashPre, currentBrokerageSale)
+                    } else {
+                        max(0.0, currentBrokerageSale - taxableCashPre)
+                    }
+                    val realizedGain = simulateStockSale(stockSold)
+                    val result = calculateRetirementTax(currentIRA, realizedGain)
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    netCash = (currentIRA + currentBrokerageSale + fixedCash) - totalTax
+
+                    iraIterations++
+                    if (iraIterations > 20) break
+                }
+            }
+
+            rothDistribution = min(rothDistribution, maxRoth)
+            currentIRA = min(currentIRA, maxIra)
+
+            if (netCash + rothDistribution < targetNetCash) {
+                val additionalNeeded = targetNetCash - (netCash + rothDistribution)
+                currentBrokerageSale += additionalNeeded
+                netCash += additionalNeeded
+            }
+
+            iraDistribution = currentIRA
+            taxableDistribution = currentBrokerageSale
+
+            dafContribution = 0.0
+
+            for (iter in 0 until 5) {
+                val stockSold = if (investReturnPct >= 0.0) {
+                    min(taxableNonCashPre, taxableDistribution)
+                } else {
+                    max(0.0, taxableDistribution - taxableCashPre)
+                }
+                val realizedGain = simulateStockSale(stockSold)
+                val result = calculateRetirementTax(iraDistribution, realizedGain)
+                totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                netCash = (iraDistribution + taxableDistribution + fixedCash) - totalTax
+                surplus = netCash + rothDistribution - targetNetCash
+
+                if (suggestRmd() > 0.0 && surplus > 0.0) {
+                    dafContribution = surplus * dafExcessPct
+                } else {
+                    dafContribution = 0.0
+                    break
+                }
             }
         }
-        
+
         val finalStockSold = if (investReturnPct >= 0.0) {
             min(taxableNonCashPre, taxableDistribution)
         } else {
@@ -733,7 +826,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         val finalRealizedGain = simulateStockSale(finalStockSold)
         realizedGain = finalRealizedGain
-        val finalResult = calculateRetirementTax(iraDistribution, finalRealizedGain)
+        val finalResult = calculateRetirementTax(iraDistribution + rothConversion, finalRealizedGain)
         
         fedTaxableSocialSecurity = finalResult.taxableSocialSecurity
         fedOrdinaryBracketRate = finalResult.fedOrdinaryBracketRate
@@ -1189,7 +1282,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         surplus -= iraTarget
 
         val rmdVal = suggestRmd()
-        if (iraDistribution > rmdVal) {
+        if (rmdVal > 0.0 && iraDistribution > rmdVal) {
             val rothFromIRA = min(iraDistribution - rmdVal, surplus)
             rothDistribution -= rothFromIRA
             surplus -= rothFromIRA
