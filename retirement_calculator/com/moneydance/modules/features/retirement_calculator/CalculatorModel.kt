@@ -184,6 +184,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var pensionSpouse: Double = 0.0
     var dividends: Double = 0.0
     var interest: Double = 0.0
+    var taxableDividends: Double = 0.0
+    var taxableInterest: Double = 0.0
 
     var otherExpenses: Double = 0.0
     var mortgage: Double = 0.0
@@ -551,6 +553,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val iraDividends = iraNCS * DIVIDEND_RATE
         val rothDividends = rothNCS * DIVIDEND_RATE
         val taxableDividends = taxNCS * DIVIDEND_RATE
+        
+        interest = iraInterest + rothInterest + taxableInterest
+        dividends = iraDividends + rothDividends + taxableDividends
+        this.taxableInterest = taxableInterest
+        this.taxableDividends = taxableDividends
         
         val iraRoi = iraNCS * investReturnPct
         val rothRoi = rothNCS * investReturnPct
@@ -951,11 +958,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     }
 
     fun getOrdinaryIncome(): Double {
-        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + interest
+        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
     }
 
     fun getOtherIncome(): Double {
-        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + interest + dividends
+        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + taxableDividends
     }
 
     data class TaxCalculationResult(
@@ -1412,6 +1419,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["roth_distro"] = rothDistribution
         result["other_distro"] = taxableDistribution
         result["realized_gain"] = realizedGain
+        result["taxable_dividends"] = taxableDividends
+        result["taxable_interest"] = taxableInterest
         result["daf_distro"] = dafDistribution
         result["daf_contrib"] = dafContribution
         result["rmd"] = suggestRmd()

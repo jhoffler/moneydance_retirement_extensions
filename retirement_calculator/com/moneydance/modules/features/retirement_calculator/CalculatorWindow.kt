@@ -1286,7 +1286,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val totSelf = salSelf + ssSelf + penSelf
             val totSp = salSp + ssSp + penSp
             val taxableDist = getD("other_distro")
-            val jointTot = iraDist + rothDist + (totDiv + totInt) + taxableDist
+            val taxableDiv = getD("taxable_dividends")
+            val taxableInt = getD("taxable_interest")
+            val jointTot = iraDist + rothDist + (taxableDiv + taxableInt) + taxableDist
             val grandTot = totSelf + totSp + jointTot
             
             data class ColSpec(
@@ -1308,7 +1310,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 ColSpec("Pension", penSelf, penSp, 0.0, penSelf + penSp),
                 ColSpec("IRA", 0.0, 0.0, iraDist, iraDist),
                 ColSpec("Roth", 0.0, 0.0, rothDist, rothDist),
-                ColSpec("Taxable Div/Int", 0.0, 0.0, totDiv + totInt, totDiv + totInt),
+                ColSpec("Taxable Div/Int", 0.0, 0.0, taxableDiv + taxableInt, taxableDiv + taxableInt),
                 ColSpec("Taxable (Gain)", 0.0, 0.0, taxableDist, taxableDist, isTaxableGain = true, jointGain = realizedGain, totalGain = realizedGain)
             )
             
@@ -1440,12 +1442,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("</ul>")
             }
 
+            val totalExpenditures = getD("housing") + getD("travel_eldercare") + getD("other") + getD("taxes")
+
             sb.append("## Tax & Expense Information\n")
-            sb.append("* **Total Taxes**: ").append(fmt(r["taxes"]))
-                .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
-                .append(", State: ").append(fmt(r["state_income_tax"]))
-                .append(", Payroll: ").append(fmt(r["payroll_tax"]))
-                .append(", Property: ").append(fmt(r["property_tax"])).append(")\n")
             sb.append("* **Federal Ordinary Income Tax Bracket**:\n")
             sb.append("  * Active Bracket Rate: **").append(ordRateStr).append("**\n")
             sb.append("  * Taxable Ordinary Income: **").append(fmt(ordInc)).append("**\n")
@@ -1456,18 +1455,18 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             sb.append("  * Combined Taxable Income: **").append(fmt(totInc)).append("**\n")
             sb.append(combIncDerivationMd)
             sb.append("  * Bracket Income Limit: up to **").append(cgLimitStr).append("**\n")
-            sb.append("* **Expenditures**:\n")
+            sb.append("* **Expenditures**: **").append(fmt(totalExpenditures)).append("**\n")
             sb.append("  * Housing (Mortgage): ").append(fmt(r["housing"])).append("\n")
             sb.append("  * Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("\n")
-            sb.append("  * Other spending: ").append(fmt(r["other"])).append("\n\n")
+            sb.append("  * Other spending: ").append(fmt(r["other"])).append("\n")
+            sb.append("  * Taxes: **").append(fmt(r["taxes"])).append("**\n")
+            sb.append("    * Federal: **").append(fmt(r["fed_income_tax"])).append("**\n")
+            sb.append("    * State: **").append(fmt(r["state_income_tax"])).append("**\n")
+            sb.append("    * Payroll: **").append(fmt(r["payroll_tax"])).append("**\n")
+            sb.append("    * Property: **").append(fmt(r["property_tax"])).append("**\n\n")
             
             htmlSb.append("<h2 style=\"font-family: Arial, sans-serif; font-size: 13pt; color: #555555; margin-top: 14pt; margin-bottom: 6pt;\">Tax & Expense Information</h2>\n")
             htmlSb.append("<ul style=\"font-family: Arial, sans-serif; font-size: 10pt; line-height: 1.4; margin-bottom: 12pt; padding-left: 20px;\">\n")
-            htmlSb.append("<li><strong>Total Taxes</strong>: ").append(fmt(r["taxes"]))
-                .append(" (Fed: ").append(fmt(r["fed_income_tax"]))
-                .append(", State: ").append(fmt(r["state_income_tax"]))
-                .append(", Payroll: ").append(fmt(r["payroll_tax"]))
-                .append(", Property: ").append(fmt(r["property_tax"])).append(")</li>\n")
             htmlSb.append("<li><strong>Federal Ordinary Income Tax Bracket</strong>:\n")
             htmlSb.append("<ul style=\"padding-left: 20px;\">")
             htmlSb.append("<li>Active Bracket Rate: <strong>").append(ordRateStr).append("</strong></li>\n")
@@ -1484,11 +1483,18 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             htmlSb.append("</li>\n")
             htmlSb.append("<li>Bracket Income Limit: up to <strong>").append(cgLimitStr).append("</strong></li>\n")
             htmlSb.append("</ul></li>\n")
-            htmlSb.append("<li><strong>Expenditures</strong>:\n")
+            htmlSb.append("<li><strong>Expenditures</strong>: <strong>").append(fmt(totalExpenditures)).append("</strong>\n")
             htmlSb.append("<ul style=\"padding-left: 20px;\">")
             htmlSb.append("<li>Housing (Mortgage): ").append(fmt(r["housing"])).append("</li>\n")
             htmlSb.append("<li>Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("</li>\n")
             htmlSb.append("<li>Other spending: ").append(fmt(r["other"])).append("</li>\n")
+            htmlSb.append("<li>Taxes: <strong>").append(fmt(r["taxes"])).append("</strong>\n")
+            htmlSb.append("<ul style=\"padding-left: 20px;\">")
+            htmlSb.append("<li>Federal: ").append(fmt(r["fed_income_tax"])).append("</li>\n")
+            htmlSb.append("<li>State: ").append(fmt(r["state_income_tax"])).append("</li>\n")
+            htmlSb.append("<li>Payroll: ").append(fmt(r["payroll_tax"])).append("</li>\n")
+            htmlSb.append("<li>Property: ").append(fmt(r["property_tax"])).append("</li>\n")
+            htmlSb.append("</ul></li>\n")
             htmlSb.append("</ul></li>\n")
             htmlSb.append("</ul>\n")
 
