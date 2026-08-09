@@ -670,10 +670,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 rothDistribution = 0.0
             }
             
-            currentIRA = iraDistributionVal
+            currentIRA = iraDistributionVal + rothConversionVal
             currentBrokerageSale = taxableDistributionVal
             rothConversion = rothConversionVal
-            iraDistribution = iraDistributionVal
+            iraDistribution = iraDistributionVal + rothConversionVal
+            rothDistribution = rothDistribution - rothConversionVal
             taxableDistribution = taxableDistributionVal
         } else {
             currentBrokerageSale = max(0.0, estimatedGrossNeeded - rmdValue - fixedCash)
@@ -1513,6 +1514,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         result["roth_distro"] = rothDistribution
         result["other_distro"] = taxableDistribution
         result["realized_gain"] = realizedGain
+        result["roth_conversion"] = rothConversion
         result["taxable_dividends"] = taxableDividends
         result["taxable_interest"] = taxableInterest
         result["daf_distro"] = dafDistribution

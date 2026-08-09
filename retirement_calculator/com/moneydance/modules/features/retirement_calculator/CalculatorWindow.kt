@@ -1280,8 +1280,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val ssSp = getD("socsecSpouse")
             val penSelf = getD("pensionSelf")
             val penSp = getD("pensionSpouse")
-            val iraDist = getD("ira_distro")
-            val rothDist = getD("roth_distro")
+            val rothConv = getD("roth_conversion")
+            val iraDist = getD("ira_distro") - rothConv
+            val rothDist = getD("roth_distro") + rothConv
             val realizedGain = getD("realized_gain")
             val totSelf = salSelf + ssSelf + penSelf
             val totSp = salSp + ssSp + penSp
@@ -1402,6 +1403,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("      * Pension: **").append(fmt(penSelf + penSp)).append("**\n")
                 append("      * Interest: **").append(fmt(taxableIntVal)).append("**\n")
                 append("      * IRA Distribution: **").append(fmt(iraDist)).append("**\n")
+                if (rothConv > 0.01) {
+                    append("      * Roth Conversion: **").append(fmt(rothConv)).append("**\n")
+                }
                 append("      * Taxable Social Security: **").append(fmt(taxSS)).append("** (Gross SS: **").append(fmt(ssSelf + ssSp)).append("**)\n")
                 append("    * Deductions:\n")
                 append("      * Standard Deduction: **-").append(fmt(stdDed)).append("**\n")
@@ -1425,6 +1429,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("<li>Pension: <strong>").append(fmt(penSelf + penSp)).append("</strong></li>")
                 append("<li>Interest: <strong>").append(fmt(taxableIntVal)).append("</strong></li>")
                 append("<li>IRA Distribution: <strong>").append(fmt(iraDist)).append("</strong></li>")
+                if (rothConv > 0.01) {
+                    append("<li>Roth Conversion: <strong>").append(fmt(rothConv)).append("</strong></li>")
+                }
                 append("<li>Taxable Social Security: <strong>").append(fmt(taxSS)).append("</strong> (Gross SS: <strong>").append(fmt(ssSelf + ssSp)).append("</strong>)</li>")
                 append("</ul></li>")
                 append("<li>Deductions:")
