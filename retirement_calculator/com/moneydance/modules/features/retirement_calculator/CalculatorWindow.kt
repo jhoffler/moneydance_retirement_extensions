@@ -1393,11 +1393,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val stdDed = getD("standard_deduction")
             val dafContrib = getD("daf_contrib")
             
+            val taxableIntVal = getD("taxable_interest")
+            val taxableDivVal = getD("taxable_dividends")
+
             val ordIncDerivationMd = buildString {
                 append("    * Gross Ordinary Income components:\n")
                 append("      * Salary: **").append(fmt(salSelf + salSp)).append("**\n")
                 append("      * Pension: **").append(fmt(penSelf + penSp)).append("**\n")
-                append("      * Interest: **").append(fmt(totInt)).append("**\n")
+                append("      * Interest: **").append(fmt(taxableIntVal)).append("**\n")
                 append("      * IRA Distribution: **").append(fmt(iraDist)).append("**\n")
                 append("      * Taxable Social Security: **").append(fmt(taxSS)).append("** (Gross SS: **").append(fmt(ssSelf + ssSp)).append("**)\n")
                 append("    * Deductions:\n")
@@ -1411,7 +1414,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("    * Components:\n")
                 append("      * Taxable Ordinary Income: **").append(fmt(ordInc)).append("**\n")
                 append("      * Taxable Capital Gains: **").append(fmt(realizedGain)).append("**\n")
-                append("      * Taxable Dividends: **").append(fmt(totDiv)).append("**\n")
+                append("      * Taxable Dividends: **").append(fmt(taxableDivVal)).append("**\n")
             }
             
             val ordIncDerivationHtml = buildString {
@@ -1420,7 +1423,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("<ul style=\"padding-left: 20px;\">")
                 append("<li>Salary: <strong>").append(fmt(salSelf + salSp)).append("</strong></li>")
                 append("<li>Pension: <strong>").append(fmt(penSelf + penSp)).append("</strong></li>")
-                append("<li>Interest: <strong>").append(fmt(totInt)).append("</strong></li>")
+                append("<li>Interest: <strong>").append(fmt(taxableIntVal)).append("</strong></li>")
                 append("<li>IRA Distribution: <strong>").append(fmt(iraDist)).append("</strong></li>")
                 append("<li>Taxable Social Security: <strong>").append(fmt(taxSS)).append("</strong> (Gross SS: <strong>").append(fmt(ssSelf + ssSp)).append("</strong>)</li>")
                 append("</ul></li>")
@@ -1438,7 +1441,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("<ul style=\"padding-left: 20px; font-size: 9pt;\">")
                 append("<li>Taxable Ordinary Income: <strong>").append(fmt(ordInc)).append("</strong></li>")
                 append("<li>Taxable Capital Gains: <strong>").append(fmt(realizedGain)).append("</strong></li>")
-                append("<li>Taxable Dividends: <strong>").append(fmt(totDiv)).append("</strong></li>")
+                append("<li>Taxable Dividends: <strong>").append(fmt(taxableDivVal)).append("</strong></li>")
                 append("</ul>")
             }
 

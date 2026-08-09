@@ -834,7 +834,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         fedCapGainsBracketRate = finalResult.fedCapGainsBracketRate
         fedCapGainsBracketLimit = finalResult.fedCapGainsBracketLimit
         fedTaxableOrdinaryIncome = finalResult.taxableOrdinaryIncome
-        fedTotalTaxableIncome = finalResult.taxableOrdinaryIncome + finalRealizedGain + dividends
+        fedTotalTaxableIncome = finalResult.taxableOrdinaryIncome + finalRealizedGain + taxableDividends
 
         if (surplus > 0.0) {
             fundSavings(surplus)
@@ -1109,7 +1109,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             }
         }
 
-        val totalGainsAndQualified = longTermGains + dividends
+        val totalGainsAndQualified = longTermGains + taxableDividends
         val totalTaxableIncome = taxableOrdinaryIncome + totalGainsAndQualified
 
         var capGainsTax = 0.0
