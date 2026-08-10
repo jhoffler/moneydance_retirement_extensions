@@ -614,6 +614,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra)
                     rothConversionVal = min(maxConvert, rothConversionVal)
+                    if (taxableSavings < targetNetCash * 2.0) {
+                        rothConversionVal = 0.0
+                    }
                     
                     val result = calculateRetirementTax(rothConversionVal, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
@@ -638,6 +641,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
                     rothConversionVal = min(maxConvert, rothConversionVal)
+                    if (taxableSavings < targetNetCash * 2.0) {
+                        rothConversionVal = 0.0
+                    }
                     
                     val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
@@ -656,6 +662,9 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
                     rothConversionVal = min(maxConvert, rothConversionVal)
+                    if (taxableSavings < targetNetCash * 2.0) {
+                        rothConversionVal = 0.0
+                    }
                     
                     val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes

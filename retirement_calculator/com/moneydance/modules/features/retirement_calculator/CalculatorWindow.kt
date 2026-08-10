@@ -18,8 +18,11 @@ import java.util.Vector
 import kotlin.math.max
 import kotlin.math.min
 import java.awt.datatransfer.DataFlavor
+import java.awt.event.*
 
 class CalculatorWindow(private val extension: Main, private val mdBook: com.infinitekind.moneydance.model.AccountBook) : JFrame("Retirement Calculator") {
+    private var lastSimRuns: List<List<YearRow>>? = null
+    private var activeSimIndex: Int? = null
     
     // Map of text fields and other inputs
     private val dollarKeys = setOf(
@@ -185,6 +188,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         mainTabbedPane.addTab("Projections Table", createTablePanel())
         mainTabbedPane.addTab("Net Worth Chart", chartPanel)
         mainTabbedPane.addTab("Simulation Chart", simChartPanel)
+        simChartPanel.onRunSelected = { index ->
+            showSimulationRun(index)
+        }
         mainTabbedPane.addTab("Help", createHelpPanel())
         
         val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, configTabs, mainTabbedPane)
@@ -912,6 +918,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     // Main recalculate action
     private fun recalc() {
+        lastSimRuns = null
+        activeSimIndex = null
+        title = "Retirement Calculator"
         val form = getFormData()
         
         // Optimizations run before standard recalculate
@@ -1001,6 +1010,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     // Monte Carlo simulation runner
     private fun runSimulation() {
+        activeSimIndex = null
+        title = "Retirement Calculator"
         val form = getFormData()
         val engine = MonteCarlo(form)
         
@@ -1021,6 +1032,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 dialog.dispose()
                 try {
                     val runs = get()
+                    lastSimRuns = runs
                     simChartPanel.updateRuns(runs)
                     mainTabbedPane.setSelectedIndex(2) // open sim chart
                 } catch (e: Exception) {
@@ -1135,32 +1147,68 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     // Print helper
     private fun printReport() {
         try {
-            val startDateStr = dateFields["start_date"]?.let { df ->
-                val dateInt = df.dateInt
-                if (dateInt > 0) {
-                    val y = dateInt / 10000
-                    val m = (dateInt % 10000) / 100
-                    val d = dateInt % 100
-                    String.format("%02d/%02d/%04d", m, d, y)
-                } else null
-            } ?: "Unknown"
+            val printerJob = PrinterJob.getPrinterJob()
+            val attr = javax.print.attribute.HashPrintRequestAttributeSet()
+            attr.add(javax.print.attribute.standard.OrientationRequested.LANDSCAPE)
             
-            val runTimeStr = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMMM dd, YYYY hh:mm a"))
+            val printable = Printable { g, pf, pageIndex ->
+                if (pageIndex > 0) return@Printable Printable.NO_SUCH_PAGE
+                
+                val g2d = g as Graphics2D
+                g2d.color = Color.BLACK
+                g2d.font = Font("Arial", Font.BOLD, 14)
+                g2d.drawString("Retirement Calculator Projections", pf.imageableX.toInt(), (pf.imageableY + 15).toInt())
+                
+                g2d.font = Font("Arial", Font.PLAIN, 10)
+                val runTimeStr = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("MMMM dd, yyyy hh:mm a"))
+                g2d.drawString("Report Generated: $runTimeStr", pf.imageableX.toInt(), (pf.imageableY + 30).toInt())
+                
+                val simIdx = activeSimIndex
+                val shift = if (simIdx != null) {
+                    g2d.drawString("Simulation Run #${simIdx + 1}", pf.imageableX.toInt(), (pf.imageableY + 42).toInt())
+                    50.0
+                } else {
+                    38.0
+                }
+                
+                val tablePrintable = resultTable.getPrintable(JTable.PrintMode.FIT_WIDTH, null, null)
+                val paper = pf.paper
+                paper.setImageableArea(
+                    pf.imageableX,
+                    pf.imageableY + shift,
+                    pf.imageableWidth,
+                    pf.imageableHeight - shift
+                )
+                val delegatePf = pf.clone() as PageFormat
+                delegatePf.paper = paper
+                
+                tablePrintable.print(g, delegatePf, pageIndex)
+            }
             
-            val headerFormat = java.text.MessageFormat("Retirement Calculator Projections from $startDateStr  |  Report Generated: $runTimeStr")
-            val footerFormat = java.text.MessageFormat("- Page {0} -")
-            
-            resultTable.print(
-                JTable.PrintMode.FIT_WIDTH,
-                headerFormat,
-                footerFormat,
-                true,
-                null,
-                true
-            )
+            printerJob.setPrintable(printable)
+            if (printerJob.printDialog(attr)) {
+                printerJob.print(attr)
+            }
         } catch (e: Exception) {
             JOptionPane.showMessageDialog(this, "Error printing: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
         }
+    }
+
+    private fun showSimulationRun(index: Int) {
+        val runs = lastSimRuns ?: return
+        if (index !in runs.indices) return
+        
+        activeSimIndex = index
+        title = "Retirement Calculator - Simulation #${index + 1}"
+        
+        currentResults.clear()
+        for (yearRow in runs[index]) {
+            currentResults.add(yearRow.toMap())
+        }
+        
+        updateTable()
+        chartPanel.updateData(currentResults, getFormData())
+        mainTabbedPane.setSelectedIndex(0)
     }
 
     private fun exportInstructions() {
@@ -2049,10 +2097,78 @@ class SavingsChartPanel : JPanel() {
 // 2. Monte Carlo Bar Simulation Graph Component
 class SimulationChartPanel : JPanel() {
     private var runs: List<List<YearRow>> = emptyList()
+    private var hoverIndex: Int = -1
+    private var tooltipText: String? = null
+    private var tooltipPoint: Point? = null
+    
+    var onRunSelected: ((Int) -> Unit)? = null
+
+    init {
+        addMouseMotionListener(object : MouseMotionAdapter() {
+            override fun mouseMoved(e: MouseEvent) {
+                updateHover(e.point)
+            }
+        })
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseExited(e: MouseEvent) {
+                hoverIndex = -1
+                tooltipText = null
+                tooltipPoint = null
+                repaint()
+            }
+            override fun mousePressed(e: MouseEvent) {
+                if (hoverIndex in runs.indices) {
+                    onRunSelected?.invoke(hoverIndex)
+                }
+            }
+        })
+    }
+
+    private fun updateHover(p: Point) {
+        if (runs.isEmpty()) return
+        val padding = 60
+        val graphW = width - 2 * padding
+        if (p.x in padding..(padding + graphW)) {
+            val barCount = runs.size
+            val barW = max(1.0, graphW.toDouble() / barCount)
+            val index = max(0, min(barCount - 1, ((p.x - padding) / barW).toInt()))
+            if (index != hoverIndex) {
+                hoverIndex = index
+                val run = runs[index]
+                val endingSavings = run.last().getTotalSavings()
+                tooltipText = String.format("Simulation #%d: $%,.2f", index + 1, endingSavings)
+                tooltipPoint = p
+                repaint()
+            } else if (tooltipPoint != p) {
+                tooltipPoint = p
+                repaint()
+            }
+        } else {
+            if (hoverIndex != -1) {
+                hoverIndex = -1
+                tooltipText = null
+                tooltipPoint = null
+                repaint()
+            }
+        }
+    }
 
     fun updateRuns(newRuns: List<List<YearRow>>) {
         runs = newRuns
+        hoverIndex = -1
+        tooltipText = null
+        tooltipPoint = null
         repaint()
+    }
+
+    private fun formatCompact(v: Double): String {
+        return when {
+            v < 10.0 -> String.format("$%.0f", v)
+            v < 1000.0 -> String.format("$%.0f", v)
+            v < 1000000.0 -> String.format("$%.0fk", v / 1000.0)
+            v < 1000000000.0 -> String.format("$%.0fM", v / 1000000.0)
+            else -> String.format("$%.0fB", v / 1000000000.0)
+        }
     }
 
     override fun paintComponent(g: Graphics) {
@@ -2072,23 +2188,32 @@ class SimulationChartPanel : JPanel() {
         val graphH = height - 2 * padding
         
         val maxVal = runs.maxOfOrNull { it.last().getTotalSavings() } ?: 10000.0
-        val minVal = runs.minOfOrNull { it.last().getTotalSavings() } ?: 0.0
-        
-        // Normalize heights
-        val range = if (maxVal - minVal > 0) maxVal - minVal else 1.0
+        val maxLog = Math.log10(max(10.0, maxVal))
+        val minLog = 1.0 // Log10(10)
+        val logRange = if (maxLog - minLog > 0) maxLog - minLog else 1.0
         
         val barCount = runs.size
         val barW = max(1.0, graphW.toDouble() / barCount)
         
+        // Find rational power of 10 values that fit between minLog and maxLog
+        val axisPoints = mutableListOf<Double>()
+        var currentPower = 1.0
+        while (currentPower <= maxLog + 0.1) {
+            axisPoints.add(currentPower)
+            currentPower += 1.0
+        }
+        
         // Draw grid
         g2d.color = Color.LIGHT_GRAY
-        for (i in 0..5) {
-            val y = padding + graphH - (i * graphH / 5)
-            g2d.drawLine(padding, y, padding + graphW, y)
-            val labelVal = minVal + (i * range / 5)
-            g2d.color = Color.DARK_GRAY
-            g2d.drawString(String.format("$%,.0f", labelVal), 10, y + 5)
-            g2d.color = Color.LIGHT_GRAY
+        for (pow in axisPoints) {
+            val y = padding + graphH - (((pow - minLog) * graphH / logRange).toInt())
+            if (y in padding..(padding + graphH)) {
+                g2d.color = Color.LIGHT_GRAY
+                g2d.drawLine(padding, y, padding + graphW, y)
+                val labelVal = Math.pow(10.0, pow)
+                g2d.color = Color.DARK_GRAY
+                g2d.drawString(formatCompact(labelVal), 10, y + 5)
+            }
         }
         
         // Draw bars
@@ -2097,14 +2222,20 @@ class SimulationChartPanel : JPanel() {
             val lastSavings = run.last().getTotalSavings()
             val hasGuardrail = run.any { it.percentBelowGuardrail > 0.0 }
             
-            // Choose color: Red for fail (<=0), Orange/Teal for guardrail hits, Green for clean success
+            // Choose color: Red for fail (<=0), Orange for guardrail hits, Green for clean success
             g2d.color = when {
                 lastSavings <= 0.0 -> Color.RED
                 hasGuardrail -> Color.ORANGE
                 else -> Color(75, 200, 75)
             }
             
-            val barH = ((lastSavings - minVal) * graphH / range).toInt()
+            // Highlight hovered bar
+            if (i == hoverIndex) {
+                g2d.color = g2d.color.darker()
+            }
+            
+            val currentLog = Math.log10(max(10.0, lastSavings))
+            val barH = if (lastSavings <= 10.0) 0 else ((currentLog - minLog) * graphH / logRange).toInt()
             val x = padding + (i.toDouble() * barW).toInt()
             val y = padding + graphH - barH
             
@@ -2120,6 +2251,24 @@ class SimulationChartPanel : JPanel() {
         val successCount = runs.count { it.last().getTotalSavings() > 0.0 }
         val rate = successCount.toDouble() / runs.size * 100.0
         g2d.drawString(String.format("Simulation Results: %.1f%% Success Rate (%d / %d runs)", rate, successCount, runs.size), padding + 10, 30)
+        
+        // Draw custom tooltip inside paintComponent if active
+        val txt = tooltipText
+        val pt = tooltipPoint
+        if (txt != null && pt != null) {
+            g2d.font = Font("Arial", Font.PLAIN, 10)
+            val fm = g2d.fontMetrics
+            val tw = fm.stringWidth(txt)
+            val th = fm.height
+            val tx = max(10, min(width - tw - 20, pt.x + 10))
+            val ty = max(10, min(height - th - 15, pt.y - 15))
+            
+            g2d.color = Color(255, 255, 225)
+            g2d.fillRect(tx, ty - th + 2, tw + 10, th + 4)
+            g2d.color = Color.BLACK
+            g2d.drawRect(tx, ty - th + 2, tw + 10, th + 4)
+            g2d.drawString(txt, tx + 5, ty)
+        }
     }
 }
 
