@@ -1182,17 +1182,17 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
 
         val appendHtmlTableRow = { hsb: StringBuilder, cells: List<String>, isHeader: Boolean, isTotal: Boolean ->
-            hsb.append("<tr style=\"")
-            if (isTotal) {
-                hsb.append("font-weight: bold; background-color: #f2f2f2;")
-            }
-            hsb.append("\">")
+            hsb.append("<tr>")
             for (i in cells.indices) {
                 val cell = cells[i]
                 val align = if (i == 0) "left" else "right"
                 val padding = "padding: 6px 8px;"
                 val border = "border: 1px solid #cccccc;"
-                val font = if (isHeader) "font-weight: bold; background-color: #e6e6e6;" else ""
+                val font = when {
+                    isHeader -> "font-weight: bold; background-color: #e6e6e6;"
+                    isTotal -> "font-weight: bold; background-color: #e6e6e6; color: #0066cc;"
+                    else -> ""
+                }
                 hsb.append("<td style=\"text-align: ").append(align).append("; ").append(padding).append(" ").append(border).append(" ").append(font).append("\">")
                 hsb.append(cell)
                 hsb.append("</td>")
@@ -1282,8 +1282,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val penSelf = getD("pensionSelf")
             val penSp = getD("pensionSpouse")
             val rothConv = getD("roth_conversion")
-            val iraDist = getD("ira_distro") - rothConv
-            val rothDist = getD("roth_distro") + rothConv
+            val iraDist = getD("ira_distro")
+            val rothDist = getD("roth_distro")
             val realizedGain = getD("realized_gain")
             val totSelf = salSelf + ssSelf + penSelf
             val totSp = salSp + ssSp + penSp
@@ -1405,7 +1405,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("      * Salary: **").append(fmt(salSelf + salSp)).append("**\n")
                 append("      * Pension: **").append(fmt(penSelf + penSp)).append("**\n")
                 append("      * Interest: **").append(fmt(taxableIntVal)).append("**\n")
-                append("      * IRA Distribution: **").append(fmt(iraDist)).append("**\n")
+                append("      * IRA Distribution: **").append(fmt(iraDist - rothConv)).append("**\n")
                 if (rothConv > 0.01) {
                     append("      * Roth Conversion: **").append(fmt(rothConv)).append("**\n")
                 }
@@ -1436,7 +1436,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("<li>Salary: <strong>").append(fmt(salSelf + salSp)).append("</strong></li>")
                 append("<li>Pension: <strong>").append(fmt(penSelf + penSp)).append("</strong></li>")
                 append("<li>Interest: <strong>").append(fmt(taxableIntVal)).append("</strong></li>")
-                append("<li>IRA Distribution: <strong>").append(fmt(iraDist)).append("</strong></li>")
+                append("<li>IRA Distribution: <strong>").append(fmt(iraDist - rothConv)).append("</strong></li>")
                 if (rothConv > 0.01) {
                     append("<li>Roth Conversion: <strong>").append(fmt(rothConv)).append("</strong></li>")
                 }

@@ -585,7 +585,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val rmdValue = min(suggestRmd(), maxIra)
         val fixedCash = getOtherIncome() + socSecSelf + socSecSpouse
         
-        val isPreRmdRetirement = (ageSelf >= retirementAgeSelf || ageSpouse >= retirementAgeSpouse) && suggestRmd() < 0.01
+        val isPreRmdRetirement = (ageSelf >= 59.5 || ageSpouse >= 59.5) && suggestRmd() < 0.01
 
         var currentIRA = rmdValue
         var currentBrokerageSale = 0.0
@@ -935,8 +935,20 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             val convCash = min(rothConversion, cashDep)
             val convStock = rothConversion - convCash
             
-            val spendCash = cashDep - convCash
-            val spendStock = nonCashDep - convStock
+            var spendCash = cashDep - convCash
+            var spendStock = nonCashDep - convStock
+            
+            var remainingQcd = qcdAmount
+            if (remainingQcd > 0.0) {
+                val qcdFromCash = min(spendCash, remainingQcd)
+                spendCash -= qcdFromCash
+                remainingQcd -= qcdFromCash
+            }
+            if (remainingQcd > 0.0) {
+                val qcdFromStock = min(spendStock, remainingQcd)
+                spendStock -= qcdFromStock
+                remainingQcd -= qcdFromStock
+            }
             
             if (convCash > 0.01) {
                 actionLogs.add("Convert \$${String.format("%,.2f", convCash)} from IRA cash to Roth cash.")
