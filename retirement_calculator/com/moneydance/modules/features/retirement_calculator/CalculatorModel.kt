@@ -1303,8 +1303,11 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     }
 
     private fun fundSavings(surplusVal: Double) {
-        rothConversion = 0.0
-        qcdAmount = 0.0
+        val isPreRmd = (ageSelf >= 59.5 || ageSpouse >= 59.5) && suggestRmd() < 0.01
+        if (!isPreRmd) {
+            rothConversion = 0.0
+            qcdAmount = 0.0
+        }
         var surplus = surplusVal
         
         var iraTarget = min(salarySelf * 0.06, surplus)
