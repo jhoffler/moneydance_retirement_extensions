@@ -1791,7 +1791,7 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
             val dSpouse = max(minDeathSpouse, 85.0 + 8.0 * generateStandardNormalRandom())
             var i = 0
             while (true) {
-                if (curYear != null && (curYear.ageSelf > lifetime && curYear.ageSpouse > lifetime)) {
+                if (curYear != null && (curYear.ageSelf >= lifetime && curYear.ageSpouse >= lifetime)) {
                     break
                 }
                 if (i >= forecastYears) break // bounds safety

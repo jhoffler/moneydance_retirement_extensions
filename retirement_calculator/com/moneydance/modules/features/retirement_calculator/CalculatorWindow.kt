@@ -913,7 +913,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val lifetime = form.getInt("lifetime", 100)
         
         while (true) {
-            if (curYear != null && (curYear.ageSelf > lifetime && curYear.ageSpouse > lifetime)) {
+            if (curYear != null && (curYear.ageSelf >= lifetime && curYear.ageSpouse >= lifetime)) {
                 break
             }
             val nextRow = YearRow(form, curYear)
