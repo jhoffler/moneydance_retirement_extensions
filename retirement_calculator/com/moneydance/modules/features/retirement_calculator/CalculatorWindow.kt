@@ -33,7 +33,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     )
     private val textFields = mutableMapOf<String, JTextField>()
     private val checkboxes = mutableMapOf<String, JCheckBox>()
-    private val radioButtons = mutableMapOf<String, JRadioButton>()
+    private val lockCheckboxes = mutableMapOf<String, JCheckBox>()
     private val dateFields = mutableMapOf<String, com.moneydance.awt.JDateField>()
     
     // UI elements
@@ -213,6 +213,24 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         p.add(tf)
     }
 
+    private fun addLockableFieldRow(p: JPanel, labelText: String, key: String) {
+        val labelPanel = JPanel(BorderLayout(5, 0))
+        val cb = JCheckBox()
+        cb.toolTipText = "Lock this age for optimization"
+        lockCheckboxes[key] = cb
+        labelPanel.add(cb, BorderLayout.WEST)
+        
+        val label = JLabel(labelText)
+        labelPanel.add(label, BorderLayout.CENTER)
+        
+        p.add(labelPanel)
+        
+        val tf = JTextField()
+        tf.horizontalAlignment = JTextField.RIGHT
+        textFields[key] = tf
+        p.add(tf)
+    }
+
     private fun createEconomicPanel(): JScrollPane {
         val p = JPanel(GridBagLayout())
         p.border = EmptyBorder(10, 10, 10, 10)
@@ -220,77 +238,46 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         gbc.fill = GridBagConstraints.HORIZONTAL
         gbc.insets = Insets(5, 5, 5, 5)
         
-        // Row 0: Start Date (Col 0,1)
-        gbc.gridx = 0
-        gbc.gridy = 0
-        gbc.weightx = 0.15
-        p.add(JLabel("Start Date:"), gbc)
+        fun addRow(row: Int, labelText: String, comp: JComponent) {
+            gbc.gridy = row
+            
+            gbc.gridx = 0
+            gbc.weightx = 0.3
+            p.add(JLabel(labelText), gbc)
+            
+            gbc.gridx = 1
+            gbc.weightx = 0.7
+            p.add(comp, gbc)
+        }
         
-        gbc.gridx = 1
-        gbc.weightx = 0.35
         val dfStartDate = com.moneydance.awt.JDateField(com.infinitekind.util.CustomDateFormat("yyyy-MM-dd"))
         dateFields["start_date"] = dfStartDate
-        p.add(dfStartDate, gbc)
-
-        // Row 0: Life Expectancy (Col 2,3)
-        gbc.gridx = 2
-        gbc.weightx = 0.15
-        p.add(JLabel("Life Expectancy:"), gbc)
+        addRow(0, "Start Date:", dfStartDate)
         
-        gbc.gridx = 3
-        gbc.weightx = 0.35
         val tfLifetime = JTextField()
         tfLifetime.horizontalAlignment = JTextField.RIGHT
         textFields["lifetime"] = tfLifetime
-        p.add(tfLifetime, gbc)
-
-        // Row 1: Investment Return (Col 0,1) & ROI Std Dev (Col 2,3)
-        gbc.gridx = 0
-        gbc.gridy = 1
-        gbc.weightx = 0.15
-        p.add(JLabel("Investment Return %:"), gbc)
+        addRow(1, "Life Expectancy:", tfLifetime)
         
-        gbc.gridx = 1
-        gbc.weightx = 0.35
         val tfReturn = JTextField()
         tfReturn.horizontalAlignment = JTextField.RIGHT
         textFields["investment_return"] = tfReturn
-        p.add(tfReturn, gbc)
+        addRow(2, "Investment Return (ROI) %:", tfReturn)
         
-        gbc.gridx = 2
-        gbc.weightx = 0.15
-        p.add(JLabel("ROI Std Dev %:"), gbc)
-        
-        gbc.gridx = 3
-        gbc.weightx = 0.35
         val tfReturnDev = JTextField()
         tfReturnDev.horizontalAlignment = JTextField.RIGHT
         textFields["investment_std_dev"] = tfReturnDev
-        p.add(tfReturnDev, gbc)
-
-        // Row 2: Inflation Rate (Col 0,1) & Inflation Std Dev (Col 2,3)
-        gbc.gridx = 0
-        gbc.gridy = 2
-        gbc.weightx = 0.15
-        p.add(JLabel("Inflation Rate %:"), gbc)
+        addRow(3, "Investment Return Std Dev %:", tfReturnDev)
         
-        gbc.gridx = 1
-        gbc.weightx = 0.35
         val tfInflation = JTextField()
         tfInflation.horizontalAlignment = JTextField.RIGHT
         textFields["inflation"] = tfInflation
-        p.add(tfInflation, gbc)
+        addRow(4, "Inflation Rate %:", tfInflation)
         
-        gbc.gridx = 2
-        gbc.weightx = 0.15
-        p.add(JLabel("Inflation Std Dev %:"), gbc)
-        
-        gbc.gridx = 3
-        gbc.weightx = 0.35
         val tfInflationDev = JTextField()
         tfInflationDev.horizontalAlignment = JTextField.RIGHT
         textFields["inflation_std_dev"] = tfInflationDev
-        p.add(tfInflationDev, gbc)
+        addRow(5, "Inflation Std Dev %:", tfInflationDev)
         
         val container = JPanel(BorderLayout())
         container.add(p, BorderLayout.NORTH)
@@ -302,13 +289,19 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
         container.border = EmptyBorder(10, 10, 10, 10)
 
-        // General raise %
+        // General raise % and Optimize button
         val top = JPanel(FlowLayout(FlowLayout.LEFT))
         top.add(JLabel("Raise Percent %:"))
         val raiseF = JTextField(6)
         raiseF.horizontalAlignment = JTextField.RIGHT
         textFields["raise"] = raiseF
         top.add(raiseF)
+        
+        top.add(Box.createHorizontalStrut(10))
+        val optBtn = JButton("Optimize SocSec / Pension")
+        optBtn.addActionListener { runSocialSecurityPensionOptimization() }
+        top.add(optBtn)
+        
         container.add(top)
 
         // Self Column
@@ -322,9 +315,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         
         addFieldRow(selfPanel, "Starting Salary:", "salary")
         addFieldRow(selfPanel, "Retirement Age:", "retirement_age")
-        addFieldRow(selfPanel, "SS Start Age:", "ss_age")
+        addLockableFieldRow(selfPanel, "SS Start Age:", "ss_age")
         addFieldRow(selfPanel, "SS PIA @ 67:", "ss_pia")
-        addFieldRow(selfPanel, "Pension Start Age:", "pension_age")
+        addLockableFieldRow(selfPanel, "Pension Start Age:", "pension_age")
         addFieldRow(selfPanel, "Monthly Pension @ 62:", "pension_early")
         addFieldRow(selfPanel, "Monthly Pension @ 70:", "pension_late")
         container.add(selfPanel)
@@ -340,9 +333,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         
         addFieldRow(spousePanel, "Starting Salary:", "salary_spouse")
         addFieldRow(spousePanel, "Retirement Age:", "retirement_age_spouse")
-        addFieldRow(spousePanel, "SS Start Age:", "ss_age_spouse")
+        addLockableFieldRow(spousePanel, "SS Start Age:", "ss_age_spouse")
         addFieldRow(spousePanel, "SS PIA @ 67:", "ss_pia_spouse")
-        addFieldRow(spousePanel, "Pension Start Age:", "pension_age_spouse")
+        addLockableFieldRow(spousePanel, "Pension Start Age:", "pension_age_spouse")
         addFieldRow(spousePanel, "Monthly Pension @ 62:", "pension_early_spouse")
         addFieldRow(spousePanel, "Monthly Pension @ 70:", "pension_late_spouse")
         container.add(spousePanel)
@@ -432,6 +425,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
         fun addCheck(labelText: String, key: String) {
             val cb = JCheckBox(labelText)
+            cb.alignmentX = Component.LEFT_ALIGNMENT
             cb.addActionListener { recalc() }
             checkboxes[key] = cb
             container.add(cb)
@@ -445,45 +439,38 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
         container.add(Box.createVerticalStrut(10))
 
-        val p = JPanel(GridLayout(3, 2, 5, 5))
-        p.add(JLabel("Guardrails %:"))
-        val tf1 = JTextField()
+        val p = JPanel(GridBagLayout())
+        p.alignmentX = Component.LEFT_ALIGNMENT
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 0, 5, 10)
+
+        gbc.gridy = 0
+        gbc.gridx = 0
+        gbc.weightx = 0.3
+        p.add(JLabel("Guardrails %:"), gbc)
+
+        gbc.gridx = 1
+        gbc.weightx = 0.7
+        val tf1 = JTextField(10)
         tf1.horizontalAlignment = JTextField.RIGHT
         textFields["guardrail_percent"] = tf1
-        p.add(tf1)
+        p.add(tf1, gbc)
 
-        p.add(JLabel("Simulations count:"))
-        val tf2 = JTextField()
+        gbc.gridy = 1
+        gbc.gridx = 0
+        gbc.weightx = 0.3
+        p.add(JLabel("Simulations count:"), gbc)
+
+        gbc.gridx = 1
+        gbc.weightx = 0.7
+        val tf2 = JTextField(10)
         tf2.horizontalAlignment = JTextField.RIGHT
         textFields["num_simulations"] = tf2
-        p.add(tf2)
+        p.add(tf2, gbc)
 
         container.add(p)
-        container.add(Box.createVerticalStrut(10))
 
-        // Optimization Radio buttons
-        val radioPanel = JPanel()
-        radioPanel.layout = BoxLayout(radioPanel, BoxLayout.Y_AXIS)
-        radioPanel.border = TitledBorder("Social Security / Pension Optimization")
-        
-        val bg = ButtonGroup()
-        
-        fun addRadio(text: String, id: String, selected: Boolean = false) {
-            val rb = JRadioButton(text)
-            rb.isSelected = selected
-            rb.addActionListener { recalc() }
-            radioButtons[id] = rb
-            bg.add(rb)
-            radioPanel.add(rb)
-        }
-
-        addRadio("None", "opt_none", true)
-        addRadio("Social Security vs. Pension", "opt_ss_vs_pension")
-        addRadio("Social Security Self vs. Spouse", "opt_ss_self_vs_spouse")
-        addRadio("Pension Self vs. Spouse", "opt_pension_self_vs_spouse")
-
-        container.add(radioPanel)
-        
         val wrapper = JPanel(BorderLayout())
         wrapper.add(container, BorderLayout.NORTH)
         return JScrollPane(wrapper)
@@ -631,9 +618,6 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         for ((k, cb) in checkboxes) {
             map[k] = cb.isSelected.toString()
-        }
-        for ((k, rb) in radioButtons) {
-            map[k] = rb.isSelected.toString()
         }
         for ((k, df) in dateFields) {
             val dateInt = df.dateInt
@@ -923,19 +907,16 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         title = "Retirement Calculator"
         val form = getFormData()
         
-        // Optimizations run before standard recalculate
-        val optimizedForm = runOptimization(form)
-        
         currentResults.clear()
         
         var curYear: YearRow? = null
-        val lifetime = optimizedForm.getInt("lifetime", 100)
+        val lifetime = form.getInt("lifetime", 100)
         
         while (true) {
             if (curYear != null && (curYear.ageSelf > lifetime || curYear.ageSpouse > lifetime)) {
                 break
             }
-            val nextRow = YearRow(optimizedForm, curYear)
+            val nextRow = YearRow(form, curYear)
             currentResults.add(nextRow.toMap())
             curYear = nextRow
         }
@@ -945,67 +926,330 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         mainTabbedPane.setSelectedIndex(0)
     }
 
-    // Run Social Security / Pension starting age optimization
-    private fun runOptimization(originalForm: Map<String, String>): Map<String, String> {
-        if (radioButtons["opt_none"]?.isSelected == true) return originalForm
-        
-        val firstRow = YearRow(originalForm, null)
-        val startAgeVal = min(firstRow.ageSelf, firstRow.ageSpouse)
-        if (startAgeVal < 60) return originalForm
-        
-        val mutableForm = originalForm.toMutableMap()
-        var bestAge1 = originalForm.getDouble("ss_age")
-        var bestAge2 = originalForm.getDouble("pension_age")
-        var maxFinalSavings = -1.0
-        
-        for (a1 in startAgeVal..75) {
-            for (a2 in startAgeVal..75) {
-                val tempForm = originalForm.toMutableMap()
-                if (radioButtons["opt_ss_vs_pension"]?.isSelected == true) {
-                    tempForm["ss_age"] = a1.toString()
-                    tempForm["ss_age_spouse"] = a1.toString()
-                    tempForm["pension_age"] = a2.toString()
-                    tempForm["pension_age_spouse"] = a2.toString()
-                } else if (radioButtons["opt_ss_self_vs_spouse"]?.isSelected == true) {
-                    tempForm["ss_age"] = a1.toString()
-                    tempForm["ss_age_spouse"] = a2.toString()
-                } else if (radioButtons["opt_pension_self_vs_spouse"]?.isSelected == true) {
-                    tempForm["pension_age"] = a1.toString()
-                    tempForm["pension_age_spouse"] = a2.toString()
-                }
-                
-                // Run projection
-                var cur: YearRow? = null
-                val lifetime = tempForm.getInt("lifetime", 100)
-                while (true) {
-                    if (cur != null && (cur.ageSelf > lifetime || cur.ageSpouse > lifetime)) {
-                        break
+    private fun formatAge(age: Double): String {
+        return if (age % 1.0 == 0.0) {
+            String.format("%.0f", age)
+        } else {
+            String.format("%.1f", age)
+        }
+    }
+
+    private fun runSocialSecurityPensionOptimization() {
+        val baseFormData = try {
+            getFormData()
+        } catch (e: Exception) {
+            JOptionPane.showMessageDialog(this, "Please ensure all numeric settings are filled with valid values.", "Error", JOptionPane.ERROR_MESSAGE)
+            return
+        }
+
+        val retAgeSelf = max(60.0, baseFormData.getDouble("retirement_age", 62.0)).toInt()
+        val retAgeSpouse = max(60.0, baseFormData.getDouble("retirement_age_spouse", 63.0)).toInt()
+
+        val currentSsSelf = baseFormData.getDouble("ss_age", 67.0)
+        val currentPenSelf = baseFormData.getDouble("pension_age", 67.0)
+        val currentSsSpouse = baseFormData.getDouble("ss_age_spouse", 67.0)
+        val currentPenSpouse = baseFormData.getDouble("pension_age_spouse", 67.0)
+
+        // 1. Generate Phase 1 Combinations (Integer Search)
+        val ssSelfRange1 = if (lockCheckboxes["ss_age"]?.isSelected == true) listOf(currentSsSelf) else (retAgeSelf..70).map { it.toDouble() }
+        val penSelfRange1 = if (lockCheckboxes["pension_age"]?.isSelected == true) listOf(currentPenSelf) else (retAgeSelf..70).map { it.toDouble() }
+        val ssSpouseRange1 = if (lockCheckboxes["ss_age_spouse"]?.isSelected == true) listOf(currentSsSpouse) else (retAgeSpouse..70).map { it.toDouble() }
+        val penSpouseRange1 = if (lockCheckboxes["pension_age_spouse"]?.isSelected == true) listOf(currentPenSpouse) else (retAgeSpouse..70).map { it.toDouble() }
+
+        val phase1Combs = mutableListOf<Map<String, Double>>()
+        for (ssSelf in ssSelfRange1) {
+            for (penSelf in penSelfRange1) {
+                for (ssSpouse in ssSpouseRange1) {
+                    for (penSpouse in penSpouseRange1) {
+                        phase1Combs.add(mapOf(
+                            "ss_age" to ssSelf,
+                            "pension_age" to penSelf,
+                            "ss_age_spouse" to ssSpouse,
+                            "pension_age_spouse" to penSpouse
+                        ))
                     }
-                    cur = YearRow(tempForm, cur)
-                }
-                val finalSavings = cur?.getTotalSavings() ?: 0.0
-                if (finalSavings > maxFinalSavings) {
-                    maxFinalSavings = finalSavings
-                    bestAge1 = a1.toDouble()
-                    bestAge2 = a2.toDouble()
                 }
             }
         }
-        
-        // Apply optimal values
-        if (radioButtons["opt_ss_vs_pension"]?.isSelected == true) {
-            mutableForm["ss_age"] = bestAge1.toString()
-            mutableForm["ss_age_spouse"] = bestAge1.toString()
-            mutableForm["pension_age"] = bestAge2.toString()
-            mutableForm["pension_age_spouse"] = bestAge2.toString()
-        } else if (radioButtons["opt_ss_self_vs_spouse"]?.isSelected == true) {
-            mutableForm["ss_age"] = bestAge1.toString()
-            mutableForm["ss_age_spouse"] = bestAge2.toString()
-        } else if (radioButtons["opt_pension_self_vs_spouse"]?.isSelected == true) {
-            mutableForm["pension_age"] = bestAge1.toString()
-            mutableForm["pension_age_spouse"] = bestAge2.toString()
+
+        if (phase1Combs.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No valid combinations to evaluate.", "Warning", JOptionPane.WARNING_MESSAGE)
+            return
         }
-        return mutableForm
+
+        val progress = JProgressBar(0, 100)
+        progress.value = 0
+        progress.isStringPainted = true
+
+        val dialog = JDialog(this, "Optimizing... 0% complete", true)
+        val titleLabel = JLabel("Evaluating combinations...")
+        titleLabel.border = EmptyBorder(10, 10, 10, 10)
+        dialog.add(BorderLayout.NORTH, titleLabel)
+        dialog.add(BorderLayout.CENTER, progress)
+
+        val worker = object : SwingWorker<Pair<CombinationResult, Int>, Int>() {
+            override fun doInBackground(): Pair<CombinationResult, Int> {
+                val results1 = mutableListOf<CombinationResult>()
+                val total1 = phase1Combs.size
+
+                // Phase 1 execution
+                for (idx in phase1Combs.indices) {
+                    if (isCancelled) break
+                    val comb = phase1Combs[idx]
+                    
+                    val tempForm = baseFormData.toMutableMap()
+                    tempForm["ss_age"] = comb["ss_age"].toString()
+                    tempForm["pension_age"] = comb["pension_age"].toString()
+                    tempForm["ss_age_spouse"] = comb["ss_age_spouse"].toString()
+                    tempForm["pension_age_spouse"] = comb["pension_age_spouse"].toString()
+                    tempForm["num_simulations"] = "50" // Fast search uses 50 runs
+
+                    val engine = MonteCarlo(tempForm)
+                    val runs = engine.simulate()
+                    val successCount = runs.count { it.last().getTotalSavings() > 0.0 }
+                    val successRate = successCount.toDouble() / runs.size
+                    val medianSavings = runs[runs.size / 2].last().getTotalSavings()
+
+                    results1.add(CombinationResult(
+                        ssSelf = comb["ss_age"]!!,
+                        penSelf = comb["pension_age"]!!,
+                        ssSpouse = comb["ss_age_spouse"]!!,
+                        penSpouse = comb["pension_age_spouse"]!!,
+                        successRate = successRate,
+                        medianSavings = medianSavings
+                    ))
+
+                    publish((idx * 50) / total1)
+                }
+
+                if (isCancelled) throw RuntimeException("Cancelled")
+                if (results1.isEmpty()) throw RuntimeException("No Phase 1 results")
+
+                // Identify top 50 combinations of Phase 1 to get bounds
+                val rankedPhase1 = results1.sortedWith(compareByDescending<CombinationResult> { it.successRate }
+                    .thenByDescending { it.medianSavings })
+                val top50 = rankedPhase1.take(50)
+
+                // 2. Generate Phase 2 Combinations (Fractional 1/2 Year Search within Bounds of Top 50)
+                val bounds = mutableMapOf<String, Pair<Double, Double>>()
+                fun setBound(key: String, currentVal: Double, selector: (CombinationResult) -> Double) {
+                    if (lockCheckboxes[key]?.isSelected == true) {
+                        bounds[key] = Pair(currentVal, currentVal)
+                    } else {
+                        val minV = top50.minOf { selector(it) }
+                        val maxV = top50.maxOf { selector(it) }
+                        bounds[key] = Pair(minV, maxV)
+                    }
+                }
+
+                setBound("ss_age", currentSsSelf) { it.ssSelf }
+                setBound("pension_age", currentPenSelf) { it.penSelf }
+                setBound("ss_age_spouse", currentSsSpouse) { it.ssSpouse }
+                setBound("pension_age_spouse", currentPenSpouse) { it.penSpouse }
+
+                fun getRange(key: String, retAge: Int): List<Double> {
+                    val b = bounds[key]!!
+                    if (b.first == b.second) return listOf(b.first)
+                    val list = mutableListOf<Double>()
+                    var v = max(retAge.toDouble(), Math.floor(b.first))
+                    val end = min(70.0, Math.ceil(b.second))
+                    while (v <= end + 0.01) {
+                        list.add(v)
+                        if (v + 0.5 <= end) {
+                            list.add(v + 0.5)
+                        }
+                        v += 1.0
+                    }
+                    return list.distinct().sorted()
+                }
+
+                val ssSelfRange2 = getRange("ss_age", retAgeSelf)
+                val penSelfRange2 = getRange("pension_age", retAgeSelf)
+                val ssSpouseRange2 = getRange("ss_age_spouse", retAgeSpouse)
+                val penSpouseRange2 = getRange("pension_age_spouse", retAgeSpouse)
+
+                val phase2Combs = mutableListOf<Map<String, Double>>()
+                for (ssSelf in ssSelfRange2) {
+                    for (penSelf in penSelfRange2) {
+                        for (ssSpouse in ssSpouseRange2) {
+                            for (penSpouse in penSpouseRange2) {
+                                val isFractional = (ssSelf % 1.0 != 0.0 || penSelf % 1.0 != 0.0 ||
+                                                    ssSpouse % 1.0 != 0.0 || penSpouse % 1.0 != 0.0)
+                                if (isFractional) {
+                                    phase2Combs.add(mapOf(
+                                        "ss_age" to ssSelf,
+                                        "pension_age" to penSelf,
+                                        "ss_age_spouse" to ssSpouse,
+                                        "pension_age_spouse" to penSpouse
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val results2 = mutableListOf<CombinationResult>()
+                val total2 = phase2Combs.size
+
+                // Phase 2 execution
+                for (idx in phase2Combs.indices) {
+                    if (isCancelled) break
+                    val comb = phase2Combs[idx]
+
+                    val tempForm = baseFormData.toMutableMap()
+                    tempForm["ss_age"] = comb["ss_age"].toString()
+                    tempForm["pension_age"] = comb["pension_age"].toString()
+                    tempForm["ss_age_spouse"] = comb["ss_age_spouse"].toString()
+                    tempForm["pension_age_spouse"] = comb["pension_age_spouse"].toString()
+                    tempForm["num_simulations"] = "50" // Fast search uses 50 runs
+
+                    val engine = MonteCarlo(tempForm)
+                    val runs = engine.simulate()
+                    val successCount = runs.count { it.last().getTotalSavings() > 0.0 }
+                    val successRate = successCount.toDouble() / runs.size
+                    val medianSavings = runs[runs.size / 2].last().getTotalSavings()
+
+                    results2.add(CombinationResult(
+                        ssSelf = comb["ss_age"]!!,
+                        penSelf = comb["pension_age"]!!,
+                        ssSpouse = comb["ss_age_spouse"]!!,
+                        penSpouse = comb["pension_age_spouse"]!!,
+                        successRate = successRate,
+                        medianSavings = medianSavings
+                    ))
+
+                    val progressValue = 50 + if (total2 > 0) (idx * 45) / total2 else 45
+                    publish(progressValue)
+                }
+
+                if (isCancelled) throw RuntimeException("Cancelled")
+
+                // Merge pools
+                val mergedResults = (results1 + results2).distinctBy {
+                    "${it.ssSelf}_${it.penSelf}_${it.ssSpouse}_${it.penSpouse}"
+                }
+
+                // Rank the merged results
+                val sortedBySuccess = mergedResults.sortedByDescending { it.successRate }
+                val successRanks = sortedBySuccess.withIndex().associate { it.value to it.index + 1 }
+
+                val sortedByMedian = mergedResults.sortedByDescending { it.medianSavings }
+                val medianRanks = sortedByMedian.withIndex().associate { it.value to it.index + 1 }
+
+                val rankedCandidates = mergedResults.sortedBy { successRanks[it]!! + medianRanks[it]!! }
+                val top10 = rankedCandidates.take(10)
+
+                // 3. Phase 3: High-Fidelity Duel
+                publish(96)
+                val finalResults = mutableListOf<CombinationResult>()
+                val settingsCount = baseFormData.getInt("num_simulations", 100)
+
+                for (idx in top10.indices) {
+                    if (isCancelled) break
+                    val comb = top10[idx]
+                    
+                    val tempForm = baseFormData.toMutableMap()
+                    tempForm["ss_age"] = comb.ssSelf.toString()
+                    tempForm["pension_age"] = comb.penSelf.toString()
+                    tempForm["ss_age_spouse"] = comb.ssSpouse.toString()
+                    tempForm["pension_age_spouse"] = comb.penSpouse.toString()
+                    tempForm["num_simulations"] = settingsCount.toString() // UI settings count
+
+                    val engine = MonteCarlo(tempForm)
+                    val runs = engine.simulate()
+                    val successCount = runs.count { it.last().getTotalSavings() > 0.0 }
+                    val successRate = successCount.toDouble() / runs.size
+                    val medianSavings = runs[runs.size / 2].last().getTotalSavings()
+
+                    finalResults.add(CombinationResult(
+                        ssSelf = comb.ssSelf,
+                        penSelf = comb.penSelf,
+                        ssSpouse = comb.ssSpouse,
+                        penSpouse = comb.penSpouse,
+                        successRate = successRate,
+                        medianSavings = medianSavings
+                    ))
+
+                    publish(96 + (idx * 4) / top10.size)
+                }
+
+                publish(100)
+
+                val finalSortedBySuccess = finalResults.sortedByDescending { it.successRate }
+                val finalSuccessRanks = finalSortedBySuccess.withIndex().associate { it.value to it.index + 1 }
+
+                val finalSortedByMedian = finalResults.sortedByDescending { it.medianSavings }
+                val finalMedianRanks = finalSortedByMedian.withIndex().associate { it.value to it.index + 1 }
+
+                val finalBest = finalResults.minByOrNull { finalSuccessRanks[it]!! + finalMedianRanks[it]!! }
+                    ?: throw RuntimeException("Failed to find final best CombinationResult")
+
+                return Pair(finalBest, phase1Combs.size + results2.size)
+            }
+
+            override fun process(chunks: List<Int>) {
+                val latest = chunks.last()
+                progress.value = latest
+                dialog.title = "Optimizing... $latest% complete"
+                titleLabel.text = "Optimizing Phase... $latest% complete"
+            }
+
+            override fun done() {
+                dialog.dispose()
+                if (isCancelled) return
+                try {
+                    val res = get()
+                    val best = res.first
+                    val count = res.second
+                    
+                    val msg = String.format(
+                        "Optimization completed! Evaluated %d combinations.\n\n" +
+                        "Best combination found:\n" +
+                        "  Self SS Age: %s\n" +
+                        "  Self Pension Age: %s\n" +
+                        "  Spouse SS Age: %s\n" +
+                        "  Spouse Pension Age: %s\n\n" +
+                        "Simulation Success Rate: %.1f%%\n" +
+                        "Median Ending Balance: $%,.2f\n\n" +
+                        "Would you like to apply these optimized ages?",
+                        count, formatAge(best.ssSelf), formatAge(best.penSelf), formatAge(best.ssSpouse), formatAge(best.penSpouse),
+                        best.successRate * 100.0, best.medianSavings
+                    )
+                    
+                    val choice = JOptionPane.showConfirmDialog(
+                        this@CalculatorWindow,
+                        msg,
+                        "Optimization Results",
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                    
+                    if (choice == JOptionPane.YES_OPTION) {
+                        textFields["ss_age"]?.text = formatAge(best.ssSelf)
+                        textFields["pension_age"]?.text = formatAge(best.penSelf)
+                        textFields["ss_age_spouse"]?.text = formatAge(best.ssSpouse)
+                        textFields["pension_age_spouse"]?.text = formatAge(best.penSpouse)
+                        recalc()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    JOptionPane.showMessageDialog(this@CalculatorWindow, "Error during optimization: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
+                }
+            }
+        }
+
+        dialog.defaultCloseOperation = JDialog.DO_NOTHING_ON_CLOSE
+        dialog.addWindowListener(object : java.awt.event.WindowAdapter() {
+            override fun windowClosing(e: java.awt.event.WindowEvent) {
+                worker.cancel(true)
+                dialog.dispose()
+            }
+        })
+
+        dialog.setSize(400, 120)
+        dialog.setLocationRelativeTo(this)
+        worker.execute()
+        dialog.isVisible = true
     }
 
     // Monte Carlo simulation runner
@@ -2301,6 +2545,15 @@ data class ActionRow(
     val amount: String,
     val realizedGain: String,
     val purpose: String
+)
+
+data class CombinationResult(
+    val ssSelf: Double,
+    val penSelf: Double,
+    val ssSpouse: Double,
+    val penSpouse: Double,
+    val successRate: Double,
+    val medianSavings: Double
 )
 
 class HtmlSelection(private val html: String, private val plainText: String) : java.awt.datatransfer.Transferable {
