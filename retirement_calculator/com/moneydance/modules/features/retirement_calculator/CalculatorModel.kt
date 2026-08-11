@@ -592,6 +592,18 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         var surplus = 0.0
 
         if (isPreRmdRetirement) {
+            var cumulativeRoi = 0.0
+            var cur = previousYear
+            while (cur != null) {
+                val iraNonCash = max(0.0, cur.iraSavings - cur.iraCash)
+                val rothNonCash = max(0.0, cur.rothSavings - cur.rothCash)
+                val taxableNonCash = max(0.0, cur.taxableSavings - cur.taxableCash)
+                val curTotalRoi = (iraNonCash + rothNonCash + taxableNonCash + cur.dafSavings) * cur.investReturnPct
+                cumulativeRoi += curTotalRoi
+                cur = cur.previousYear
+            }
+            val isRoiNegative = investReturnPct < 0.0 || cumulativeRoi < 0.0
+
             val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
             val unusedDeduction = max(0.0, standardDeduction - guaranteedOrdinary)
             val bracketCeiling = CAP_GAINS_RATES_FED[0].maxIncome * inflationAdjustmentFactor
@@ -614,7 +626,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra)
                     rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (taxableSavings < targetNetCash * 2.0) {
+                    if (isRoiNegative) {
                         rothConversionVal = 0.0
                     }
                     
@@ -641,7 +653,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
                     rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (taxableSavings < targetNetCash * 2.0) {
+                    if (isRoiNegative) {
                         rothConversionVal = 0.0
                     }
                     
@@ -662,7 +674,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                     rothConversionVal = max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
                     rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (taxableSavings < targetNetCash * 2.0) {
+                    if (isRoiNegative) {
                         rothConversionVal = 0.0
                     }
                     
