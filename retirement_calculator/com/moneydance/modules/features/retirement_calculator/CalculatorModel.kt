@@ -1736,8 +1736,8 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
         val startAge = min(firstRow.ageSelf, firstRow.ageSpouse)
         val forecastYears = lifetime + 1 - startAge
 
-        val roiPct = firstRow.investReturnPct
-        val infPct = firstRow.inflationPct
+        val roiPct = baseFormData.getDouble("investment_return", 6.0) / 100.0
+        val infPct = baseFormData.getDouble("inflation", 2.25) / 100.0
 
         val returns = monteCarloSimulation(roiPct, investmentStdDev, numSimulations, forecastYears)
         val inflations = monteCarloSimulation(infPct, inflationStdDev, numSimulations, forecastYears)
