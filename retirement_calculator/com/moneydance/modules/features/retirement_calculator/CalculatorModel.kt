@@ -175,6 +175,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     var rothConversion: Double = 0.0
     var qcdAmount: Double = 0.0
     var realizedGain: Double = 0.0
+    var isRoiNegative: Boolean = false
+    var shouldRebalance: Boolean = true
     var fedTaxableSocialSecurity: Double = 0.0
 
     var salarySelf: Double = 0.0
@@ -525,12 +527,23 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val pensionSpousePotential = calcPotentialPension(false)
         val cashThreshold = max(0.0, estimatedGrossNeeded - ssSelfPotential - ssSpousePotential - pensionSelfPotential - pensionSpousePotential)
         
-        val isRoiPositive = investReturnPct >= 0.0
+        var cumulativeRoi = 0.0
+        var cur = previousYear
+        while (cur != null) {
+            val iraNonCash = max(0.0, cur.iraSavings - cur.iraCash)
+            val rothNonCash = max(0.0, cur.rothSavings - cur.rothCash)
+            val taxableNonCash = max(0.0, cur.taxableSavings - cur.taxableCash)
+            val curTotalRoi = (iraNonCash + rothNonCash + taxableNonCash + cur.dafSavings) * cur.investReturnPct
+            cumulativeRoi += curTotalRoi
+            cur = cur.previousYear
+        }
+        this.isRoiNegative = investReturnPct < 0.0 || cumulativeRoi < 0.0
+        this.shouldRebalance = investReturnPct >= 0.0 && !this.isRoiNegative
         
         fun getStartCashAndStock(savings: Double, cashVal: Double): Pair<Double, Double> {
             var cashStart = cashVal
             var nonCashStart = max(0.0, savings - cashVal)
-            if (isRoiPositive) {
+            if (shouldRebalance) {
                 val targetCash = min(savings, max(cashThreshold, savings * 0.05))
                 val shift = targetCash - cashStart
                 cashStart += shift
@@ -591,7 +604,92 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         var currentBrokerageSale = 0.0
         var surplus = 0.0
 
-        if (isPreRmdRetirement) {
+        if (this.isRoiNegative) {
+            var totalTax = 0.0
+            var iraDistributionVal = rmdValue
+            var taxableDistributionVal = 0.0
+            var rothDistributionVal = 0.0
+            
+            for (iter in 0 until 10) {
+                val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + rmdValue
+                val unusedDeduction = max(0.0, standardDeduction - guaranteedOrdinary)
+                
+                val shortfall = targetNetCash + totalTax - (fixedCash + rmdValue)
+                if (shortfall <= 0.0) {
+                    iraDistributionVal = rmdValue
+                    taxableDistributionVal = 0.0
+                    rothDistributionVal = 0.0
+                    val result = calculateRetirementTax(rmdValue, 0.0)
+                    totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+                    continue
+                }
+                
+                var remaining = shortfall
+                
+                val rmdFromCash = min(iraCashPre, rmdValue)
+                val rmdFromStock = rmdValue - rmdFromCash
+                val postRmdIraCash = max(0.0, iraCashPre - rmdFromCash)
+                val postRmdIraStock = max(0.0, iraNonCashPre - rmdFromStock)
+                
+                // 1. Traditional IRA cash & stock up to standard deduction room
+                val lvl1Cash = min(postRmdIraCash, min(remaining, unusedDeduction))
+                val lvl1Stock = min(postRmdIraStock, min(remaining - lvl1Cash, unusedDeduction - lvl1Cash))
+                val lvl1Total = lvl1Cash + lvl1Stock
+                
+                remaining -= lvl1Total
+                
+                // 2. Taxable Cash and Roth Cash (both 100% tax-free)
+                val taxCashUsed = min(taxableCashPre, remaining)
+                remaining -= taxCashUsed
+                
+                val rothCashUsed = min(rothCashPre, remaining)
+                remaining -= rothCashUsed
+                
+                // 2.5 Remaining IRA cash up to 12% ordinary tax bracket ceiling (safety cap)
+                val cap12Ceiling = TAX_RATES_FED[1].maxIncome * inflationAdjustmentFactor
+                val currentGrossOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + rmdValue + lvl1Total
+                val room12 = max(0.0, (cap12Ceiling + standardDeduction) - currentGrossOrdinary)
+                
+                val postLvl1IraCash = max(0.0, postRmdIraCash - lvl1Cash)
+                val lvl25Cash = min(postLvl1IraCash, min(remaining, room12))
+                remaining -= lvl25Cash
+                
+                // 3. Taxable Stock (least appreciated) and Roth Stock
+                val taxStockUsed = min(taxableNonCashPre, remaining)
+                remaining -= taxStockUsed
+                
+                val rothStockUsed = min(rothNonCashPre, remaining)
+                remaining -= rothStockUsed
+                
+                // 4. Remaining Traditional IRA cash & stock (fallback above 12% ceiling)
+                val postLvl25IraCash = max(0.0, postLvl1IraCash - lvl25Cash)
+                val postLvl1IraStock = max(0.0, postRmdIraStock - lvl1Stock)
+                
+                val lvl4Cash = min(postLvl25IraCash, remaining)
+                remaining -= lvl4Cash
+                
+                val lvl4Stock = min(postLvl1IraStock, remaining)
+                remaining -= lvl4Stock
+                
+                // Sum distributions
+                iraDistributionVal = rmdValue + lvl1Total + lvl25Cash + lvl4Cash + lvl4Stock
+                taxableDistributionVal = taxCashUsed + taxStockUsed
+                rothDistributionVal = rothCashUsed + rothStockUsed
+                
+                val simulatedGain = simulateStockSale(taxStockUsed)
+                val result = calculateRetirementTax(iraDistributionVal, simulatedGain)
+                totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
+            }
+            
+            currentIRA = iraDistributionVal
+            currentBrokerageSale = taxableDistributionVal
+            rothConversion = 0.0
+            iraDistribution = iraDistributionVal
+            rothDistribution = rothDistributionVal
+            taxableDistribution = taxableDistributionVal
+            surplus = 0.0
+        } else {
+            if (isPreRmdRetirement) {
             var cumulativeRoi = 0.0
             var cur = previousYear
             while (cur != null) {
@@ -854,11 +952,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
                 }
             }
         }
+        }
 
-        val finalStockSold = if (investReturnPct >= 0.0) {
-            min(taxableNonCashPre, taxableDistribution)
-        } else {
+        val finalStockSold = if (this.isRoiNegative) {
             max(0.0, taxableDistribution - taxableCashPre)
+        } else {
+            min(taxableNonCashPre, taxableDistribution)
         }
         val finalRealizedGain = simulateStockSale(finalStockSold)
         realizedGain = finalRealizedGain
@@ -932,7 +1031,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
     ) {
         fun applyDist(cashPre: Double, nonCashPre: Double, dist: Double): Pair<Double, Double> {
             if (dist > 0.0) {
-                return if (investReturnPct < 0.0) {
+                return if (isRoiNegative) {
                     val cashDep = min(cashPre, dist)
                     val nonCashDep = dist - cashDep
                     Pair(max(0.0, cashPre - cashDep), max(0.0, nonCashPre - nonCashDep))
@@ -950,7 +1049,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         iraCashEnd = iraC
         iraSavingsEnd = iraC + iraN
         if (iraDistribution > 0.0) {
-            val cashDep = if (investReturnPct < 0.0) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
+            val cashDep = if (isRoiNegative) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
             val nonCashDep = iraDistribution - cashDep
             
             val convCash = min(rothConversion, cashDep)
@@ -992,7 +1091,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val rothDeposit = -rothDistribution
         if (rothDeposit > 0.0) {
             val convCash = min(rothConversion, if (iraDistribution > 0.0) {
-                if (investReturnPct < 0.0) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
+                if (isRoiNegative) min(iraCashPre, iraDistribution) else max(0.0, iraDistribution - min(iraNonCashPre, iraDistribution))
             } else 0.0)
             
             rothCashEnd = rothCashPre + convCash
@@ -1002,7 +1101,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             rothCashEnd = rothC
             rothSavingsEnd = rothC + rothN
             if (rothDistribution > 0.0) {
-                val cashDep = if (investReturnPct < 0.0) min(rothCashPre, rothDistribution) else max(0.0, rothDistribution - min(rothNonCashPre, rothDistribution))
+                val cashDep = if (isRoiNegative) min(rothCashPre, rothDistribution) else max(0.0, rothDistribution - min(rothNonCashPre, rothDistribution))
                 val nonCashDep = rothDistribution - cashDep
                 if (cashDep > 0.0) {
                     actionLogs.add("Withdraw \$${String.format("%,.2f", cashDep)} from Roth cash to cover expenses.")
@@ -1022,7 +1121,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val rebalBuy = taxableCash - taxCS
         val rebalBuyWithRoi = rebalBuy * (1.0 + investReturnPct)
         
-        val taxableCashWithdrawn = if (investReturnPct < 0.0) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
+        val taxableCashWithdrawn = if (isRoiNegative) min(taxableCashPre, taxableDistribution) else max(0.0, taxableDistribution - min(taxableNonCashPre, taxableDistribution))
         val taxableStockWithdrawn = taxableDistribution - taxableCashWithdrawn
         
         var netRebalBuy = 0.0
