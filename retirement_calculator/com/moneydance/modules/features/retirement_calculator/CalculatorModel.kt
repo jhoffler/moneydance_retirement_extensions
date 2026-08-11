@@ -272,7 +272,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         inflationPct = formData.getDouble("inflation", 2.25) / 100.0
         raisePct = formData.getDouble("raise", 3.0) / 100.0
-        guardrailPct = formData.getDouble("guardrail_percent", 10.0) / 100.0
+        guardrailPct = formData.getDouble("guardrail_percent", 100.0)
 
         val excessStr = formData["daf_excess_pct"]
         dafExcessPct = if (excessStr != null && excessStr.isNotEmpty()) excessStr.toDouble() / 100.0 else 0.5
@@ -480,24 +480,27 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
         val isRetired = yearEndDate.isAfter(retirementDateSelf) && yearEndDate.isAfter(retirementDateSpouse)
         percentBelowGuardrail = 0.0
+        guardrailAdjustmentMessage = null
         if (isRetired && guardrailPct >= 0.0) {
             val totalsavings = iraSavings + rothSavings + taxableSavings
             val netCash = mortgage + elderCare + otherExpenses + travel - getOtherIncome() - socSecSelf - socSecSpouse - pensionSelf - pensionSpouse
-            val targetSavings = netCash * (1.0 - guardrailPct) / 0.04
-            if (totalsavings < targetSavings) {
-                percentBelowGuardrail = (targetSavings - totalsavings) / targetSavings
-                if (percentBelowGuardrail > MAJOR_GUARDRAIL_VIOLATION) {
+            val baseTargetSavings = netCash / 0.04
+            val triggerThreshold = baseTargetSavings * (guardrailPct / 100.0)
+            if (totalsavings < triggerThreshold) {
+                percentBelowGuardrail = (triggerThreshold - totalsavings) / triggerThreshold
+                val percentOfThreshold = if (baseTargetSavings > 0.0) (totalsavings / baseTargetSavings) * 100.0 else 0.0
+                if (totalsavings < triggerThreshold * 0.8) {
                     guardrailAdjustmentMessage = String.format(
-                        "Total savings $%,.2f is %.2f%% below guardrail threshold $%,.2f, cutting eldercare in half, travel by 95%%, and other expenses by 25%%.",
-                        totalsavings, percentBelowGuardrail * 100.0, targetSavings
+                        "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 95%%, and other expenses by 25%%.",
+                        totalsavings, percentOfThreshold, baseTargetSavings
                     )
                     travel *= 0.05
                     otherExpenses *= 0.75
                     elderCare *= 0.5
                 } else {
                     guardrailAdjustmentMessage = String.format(
-                        "Total savings $%,.2f is %.2f%% below guardrail threshold $%,.2f, cutting eldercare in half, travel by 90%%, and other expenses by 10%%.",
-                        totalsavings, percentBelowGuardrail * 100.0, targetSavings
+                        "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 90%%, and other expenses by 10%%.",
+                        totalsavings, percentOfThreshold, baseTargetSavings
                     )
                     travel *= 0.10
                     otherExpenses *= 0.90

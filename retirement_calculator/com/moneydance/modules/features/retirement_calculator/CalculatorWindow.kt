@@ -98,7 +98,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "stack_savings" to "false",
         "show_distros" to "false",
         "show_inflation_roi" to "false",
-        "guardrail_percent" to "10",
+        "guardrail_percent" to "100",
         "num_simulations" to "100"
     )
 
