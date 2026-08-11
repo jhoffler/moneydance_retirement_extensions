@@ -104,7 +104,12 @@ fun Map<String, String>.getBoolean(key: String, default: Boolean = false): Boole
     return this[key]?.toBoolean() ?: default
 }
 
-class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
+class YearRow(
+    val formData: Map<String, String>, 
+    val previousYear: YearRow?, 
+    val deathAgeSelf: Double = Double.MAX_VALUE, 
+    val deathAgeSpouse: Double = Double.MAX_VALUE
+) {
     val year: Int
     val yearStartDate: LocalDate
     val yearEndDate: LocalDate
@@ -380,7 +385,13 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             propertyTaxes = previousYear.propertyTaxes * (1.0 + previousYear.inflationPct)
         }
 
-        standardDeduction = STD_DEDUCTION * inflationAdjustmentFactor + (if (ageOldest >= 65) OBBBA_DEDUCTION else 0.0)
+        val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
+        val survivorAge = if (ageSelf <= deathAgeSelf) ageSelf else ageSpouse
+        standardDeduction = if (isSingle) {
+            (STD_DEDUCTION / 2.0) * inflationAdjustmentFactor + (if (survivorAge >= 65) OBBBA_DEDUCTION else 0.0)
+        } else {
+            STD_DEDUCTION * inflationAdjustmentFactor + (if (ageOldest >= 65) OBBBA_DEDUCTION else 0.0)
+        }
 
         calcTaxes()
     }
@@ -398,31 +409,46 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
 
     private fun calculateBaseIncome(previousYear: YearRow?) {
         if (previousYear == null) {
-            salarySelf = formData.getDouble("salary", 60000.0) * fractionOfYearBefore(retirementDateSelf)
-            salarySpouse = formData.getDouble("salary_spouse", 30000.0) * fractionOfYearBefore(retirementDateSpouse)
+            salarySelf = if (ageSelf <= deathAgeSelf) formData.getDouble("salary", 60000.0) * fractionOfYearBefore(retirementDateSelf) else 0.0
+            salarySpouse = if (ageSpouse <= deathAgeSpouse) formData.getDouble("salary_spouse", 30000.0) * fractionOfYearBefore(retirementDateSpouse) else 0.0
         } else {
-            salarySelf = previousYear.salarySelf * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSelf)
-            salarySpouse = previousYear.salarySpouse * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSpouse)
+            salarySelf = if (ageSelf <= deathAgeSelf) previousYear.salarySelf * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSelf) else 0.0
+            salarySpouse = if (ageSpouse <= deathAgeSpouse) previousYear.salarySpouse * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSpouse) else 0.0
         }
 
-        socSecSelf = calcBaseSocSecIncome(true)
-        socSecSpouse = calcBaseSocSecIncome(false)
+        val baseSsSelf = if (ageSelf <= deathAgeSelf) calcBaseSocSecIncome(true) else 0.0
+        val baseSsSpouse = if (ageSpouse <= deathAgeSpouse) calcBaseSocSecIncome(false) else 0.0
 
-        if (socSecSelf > 0.0 && socSecSpouse > 0.0) {
-            val bothStartDate = if (socSecStartDateSelf.isAfter(socSecStartDateSpouse)) socSecStartDateSelf else socSecStartDateSpouse
-            val topUpSpouse = calculateSpousalTopUp(piaSelf, piaSpouse, socSecSpouse, birthDateSpouse, bothStartDate)
-            if (topUpSpouse > 0.0) {
-                socSecSpouse += topUpSpouse
-            } else {
-                val topUpSelf = calculateSpousalTopUp(piaSpouse, piaSelf, socSecSelf, birthDateSelf, bothStartDate)
-                if (topUpSelf > 0.0) {
-                    socSecSelf += topUpSelf
+        if (ageSelf <= deathAgeSelf && ageSpouse <= deathAgeSpouse) {
+            socSecSelf = baseSsSelf
+            socSecSpouse = baseSsSpouse
+            if (socSecSelf > 0.0 && socSecSpouse > 0.0) {
+                val bothStartDate = if (socSecStartDateSelf.isAfter(socSecStartDateSpouse)) socSecStartDateSelf else socSecStartDateSpouse
+                val topUpSpouse = calculateSpousalTopUp(piaSelf, piaSpouse, socSecSpouse, birthDateSpouse, bothStartDate)
+                if (topUpSpouse > 0.0) {
+                    socSecSpouse += topUpSpouse
+                } else {
+                    val topUpSelf = calculateSpousalTopUp(piaSpouse, piaSelf, socSecSelf, birthDateSelf, bothStartDate)
+                    if (topUpSelf > 0.0) {
+                        socSecSelf += topUpSelf
+                    }
                 }
             }
+        } else if (ageSelf <= deathAgeSelf) {
+            val spouseFullPotential = calcBaseSocSecIncome(false)
+            socSecSelf = max(baseSsSelf, spouseFullPotential)
+            socSecSpouse = 0.0
+        } else if (ageSpouse <= deathAgeSpouse) {
+            val selfFullPotential = calcBaseSocSecIncome(true)
+            socSecSpouse = max(baseSsSpouse, selfFullPotential)
+            socSecSelf = 0.0
+        } else {
+            socSecSelf = 0.0
+            socSecSpouse = 0.0
         }
 
-        pensionSelf = calcBasePensionIncome(true)
-        pensionSpouse = calcBasePensionIncome(false)
+        pensionSelf = if (ageSelf <= deathAgeSelf) calcBasePensionIncome(true) else 0.0
+        pensionSpouse = if (ageSpouse <= deathAgeSpouse) calcBasePensionIncome(false) else 0.0
         val iraInterest = iraCash * INTEREST_RATE
         val rothInterest = rothCash * INTEREST_RATE
         val taxableInterest = taxableCash * INTEREST_RATE
@@ -476,6 +502,12 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
             elderCare *= 4.0
         } else if (ageOldest > lifetime - 8) {
             elderCare *= 2.0
+        }
+
+        val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
+        if (isSingle) {
+            otherExpenses *= 0.70
+            travel *= 0.50
         }
 
         val isRetired = yearEndDate.isAfter(retirementDateSelf) && yearEndDate.isAfter(retirementDateSpouse)
@@ -1249,17 +1281,20 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         val combinedIncome = (0.5 * ssBenefits) + otherIncome
 
         var taxableSS = 0.0
+        val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
+        val scaleBracket = if (isSingle) 0.5 else 1.0
+        val ssLimit1 = (if (isSingle) 25000.0 else 32000.0) * inflationAdjustmentFactor
+        val ssLimit2 = (if (isSingle) 34000.0 else 44000.0) * inflationAdjustmentFactor
 
-        if (combinedIncome > SS_BRACKETS[1].maxIncome * inflationAdjustmentFactor) {
+        if (combinedIncome > ssLimit2) {
             taxableSS = min(
                 0.85 * ssBenefits,
-                (0.85 * (combinedIncome - SS_BRACKETS[0].maxIncome * inflationAdjustmentFactor)) +
-                        (SS_BRACKETS[1].maxIncome - SS_BRACKETS[0].maxIncome) * inflationAdjustmentFactor
+                (0.85 * (combinedIncome - ssLimit1)) + (ssLimit2 - ssLimit1)
             )
-        } else if (combinedIncome > SS_BRACKETS[0].maxIncome * inflationAdjustmentFactor) {
+        } else if (combinedIncome > ssLimit1) {
             taxableSS = min(
                 0.5 * ssBenefits,
-                0.5 * (combinedIncome - SS_BRACKETS[0].maxIncome * inflationAdjustmentFactor)
+                0.5 * (combinedIncome - ssLimit1)
             )
         }
 
@@ -1270,8 +1305,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         var ordTax = 0.0
         for (idx in TAX_RATES_FED.indices) {
             val bracket = TAX_RATES_FED[idx]
-            val prevMax = if (idx > 0) TAX_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor else 0.0
-            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            val prevMax = if (idx > 0) TAX_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor * scaleBracket else 0.0
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
             if (taxableOrdinaryIncome > currentMax) {
                 ordTax += (currentMax - prevMax) * bracket.rate
             } else {
@@ -1288,8 +1323,8 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         var totalTax = 0.0
         for (idx in CAP_GAINS_RATES_FED.indices) {
             val bracket = CAP_GAINS_RATES_FED[idx]
-            val prevMax = if (idx > 0) CAP_GAINS_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor else 0.0
-            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            val prevMax = if (idx > 0) CAP_GAINS_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor * scaleBracket else 0.0
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
 
             if (taxableOrdinaryIncome > prevMax) {
                 val amountInBracket = min(taxableOrdinaryIncome, currentMax) - prevMax
@@ -1302,7 +1337,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         }
         capGainsTax = totalTax - baseTax
 
-        val stateDeduction = if (dafContribution > 0.0) dafContribution else formData.getDouble("state_std_deduction", 22500.0) * inflationAdjustmentFactor
+        val stateDeduction = if (dafContribution > 0.0) dafContribution else (if (isSingle) formData.getDouble("state_std_deduction", 22500.0) / 2.0 else formData.getDouble("state_std_deduction", 22500.0)) * inflationAdjustmentFactor
         val stateIncome = max(0.0, grossOrdinaryIncome - stateDeduction)
         stateTaxes = stateIncome * formData.getDouble("state_tax_rate", 4.5) / 100.0
         ordinaryTax = ordTax
@@ -1313,7 +1348,7 @@ class YearRow(val formData: Map<String, String>, val previousYear: YearRow?) {
         var ordLimit = Double.MAX_VALUE
         for (idx in TAX_RATES_FED.indices) {
             val bracket = TAX_RATES_FED[idx]
-            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
             if (taxableOrdinaryIncome <= currentMax) {
                 ordRate = bracket.rate
                 ordLimit = currentMax
@@ -1746,13 +1781,17 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
         val inflations = monteCarloSimulation(infPct, inflationStdDev, numSimulations, forecastYears)
 
         val runs = mutableListOf<List<YearRow>>()
+        val minDeathSelf = firstRow.ageSelf + 2.0
+        val minDeathSpouse = firstRow.ageSpouse + 2.0
 
         for (runIdx in 0 until numSimulations) {
             val runYears = mutableListOf<YearRow>()
             var curYear: YearRow? = null
+            val dSelf = max(minDeathSelf, 85.0 + 8.0 * generateStandardNormalRandom())
+            val dSpouse = max(minDeathSpouse, 85.0 + 8.0 * generateStandardNormalRandom())
             var i = 0
             while (true) {
-                if (curYear != null && (curYear.ageSelf > lifetime || curYear.ageSpouse > lifetime)) {
+                if (curYear != null && (curYear.ageSelf > lifetime && curYear.ageSpouse > lifetime)) {
                     break
                 }
                 if (i >= forecastYears) break // bounds safety
@@ -1760,7 +1799,7 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
                 curForm["investment_return"] = (returns[runIdx][i] * 100.0).toString()
                 curForm["inflation"] = (inflations[runIdx][i] * 100.0).toString()
 
-                val nextYear = YearRow(curForm, curYear)
+                val nextYear = YearRow(curForm, curYear, dSelf, dSpouse)
                 runYears.add(nextYear)
                 curYear = nextYear
                 i++
