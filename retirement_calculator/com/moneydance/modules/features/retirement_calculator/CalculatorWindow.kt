@@ -53,6 +53,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "investment_return" to "6",
         "inflation" to "2.25",
         "lifetime" to "100",
+        "lifetime_locked" to "false",
         "investment_std_dev" to "15",
         "inflation_std_dev" to "1.25",
         "raise" to "3",
@@ -257,7 +258,26 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val tfLifetime = JTextField()
         tfLifetime.horizontalAlignment = JTextField.RIGHT
         textFields["lifetime"] = tfLifetime
-        addRow(1, "Life Expectancy:", tfLifetime)
+        
+        val cbLifetimeLock = JCheckBox()
+        cbLifetimeLock.toolTipText = "Lock life expectancy"
+        checkboxes["lifetime_locked"] = cbLifetimeLock
+        cbLifetimeLock.addActionListener {
+            tfLifetime.isEnabled = !cbLifetimeLock.isSelected
+        }
+        
+        val labelPanel = JPanel(BorderLayout(5, 0))
+        labelPanel.add(cbLifetimeLock, BorderLayout.WEST)
+        labelPanel.add(JLabel("Life Expectancy:"), BorderLayout.CENTER)
+        
+        gbc.gridy = 1
+        gbc.gridx = 0
+        gbc.weightx = 0.3
+        p.add(labelPanel, gbc)
+        
+        gbc.gridx = 1
+        gbc.weightx = 0.7
+        p.add(tfLifetime, gbc)
         
         val tfReturn = JTextField()
         tfReturn.horizontalAlignment = JTextField.RIGHT
@@ -577,6 +597,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val cb = checkboxes[k]
             if (cb != null) {
                 cb.isSelected = v.toBoolean()
+                if (k == "lifetime_locked") {
+                    textFields["lifetime"]?.isEnabled = !cb.isSelected
+                }
                 continue
             }
             val df = dateFields[k]
@@ -913,10 +936,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val lifetime = form.getInt("lifetime", 100)
         
         while (true) {
-            if (curYear != null && (curYear.ageSelf >= lifetime && curYear.ageSpouse >= lifetime)) {
+            if (curYear != null && 
+                curYear.ageSelf > lifetime && 
+                curYear.ageSpouse > lifetime && 
+                min(curYear.ageSelf, curYear.ageSpouse) > 100) {
                 break
             }
-            val nextRow = YearRow(form, curYear)
+            val nextRow = YearRow(form, curYear, lifetime.toDouble(), lifetime.toDouble())
             currentResults.add(nextRow.toMap())
             curYear = nextRow
         }
@@ -1320,8 +1346,23 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         for (rowData in currentResults) {
             val v = Vector<Any>()
             v.add(rowData["year"].toString())
-            v.add(rowData["age"].toString())
-            v.add(rowData["age_spouse"].toString())
+            
+            val ageSelfVal = (rowData["age"] as? Number)?.toInt() ?: 0
+            val deathAgeSelfVal = (rowData["death_age_self"] as? Number)?.toDouble() ?: Double.MAX_VALUE
+            if (ageSelfVal > deathAgeSelfVal) {
+                v.add("-")
+            } else {
+                v.add(ageSelfVal.toString())
+            }
+            
+            val ageSpouseVal = (rowData["age_spouse"] as? Number)?.toInt() ?: 0
+            val deathAgeSpouseVal = (rowData["death_age_spouse"] as? Number)?.toDouble() ?: Double.MAX_VALUE
+            if (ageSpouseVal > deathAgeSpouseVal) {
+                v.add("-")
+            } else {
+                v.add(ageSpouseVal.toString())
+            }
+            
             v.add(df.format(rowData["savings"]))
             
             if (showDist) {

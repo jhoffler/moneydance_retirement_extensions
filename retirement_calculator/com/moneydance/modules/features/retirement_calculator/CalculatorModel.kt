@@ -374,16 +374,18 @@ class YearRow(
         // Calculate incomes
         calculateBaseIncome(previousYear)
         
-        // Calculate guardrail spending impacts
-        applySpendingGuardrails(formData)
-
-        // Calculate taxes
-        payrollTaxes = (salarySelf + salarySpouse) * formData.getDouble("payroll_tax_rate", 7.65) / 100.0
+        // Calculate property taxes first so they are available for spending guardrails
         if (previousYear == null) {
             propertyTaxes = formData.getDouble("prop_taxes", 8000.0)
         } else {
             propertyTaxes = previousYear.propertyTaxes * (1.0 + previousYear.inflationPct)
         }
+
+        // Calculate guardrail spending impacts
+        applySpendingGuardrails(formData)
+
+        // Calculate taxes
+        payrollTaxes = (salarySelf + salarySpouse) * formData.getDouble("payroll_tax_rate", 7.65) / 100.0
 
         val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
         val survivorAge = if (ageSelf <= deathAgeSelf) ageSelf else ageSpouse
@@ -504,39 +506,47 @@ class YearRow(
             elderCare *= 2.0
         }
 
+        val neitherAlive = (ageSelf > deathAgeSelf) && (ageSpouse > deathAgeSpouse)
         val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
-        if (isSingle) {
-            otherExpenses *= 0.70
-            travel *= 0.50
-        }
 
-        val isRetired = yearEndDate.isAfter(retirementDateSelf) && yearEndDate.isAfter(retirementDateSpouse)
-        percentBelowGuardrail = 0.0
-        guardrailAdjustmentMessage = null
-        if (isRetired && guardrailPct >= 0.0) {
-            val totalsavings = iraSavings + rothSavings + taxableSavings
-            val netCash = mortgage + elderCare + otherExpenses + travel - getOtherIncome() - socSecSelf - socSecSpouse - pensionSelf - pensionSpouse
-            val baseTargetSavings = netCash / 0.04
-            val triggerThreshold = baseTargetSavings * (guardrailPct / 100.0)
-            if (totalsavings < triggerThreshold) {
-                percentBelowGuardrail = (triggerThreshold - totalsavings) / triggerThreshold
-                val percentOfThreshold = if (baseTargetSavings > 0.0) (totalsavings / baseTargetSavings) * 100.0 else 0.0
-                if (totalsavings < triggerThreshold * 0.8) {
-                    guardrailAdjustmentMessage = String.format(
-                        "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 95%%, and other expenses by 25%%.",
-                        totalsavings, percentOfThreshold, baseTargetSavings
-                    )
-                    travel *= 0.05
-                    otherExpenses *= 0.75
-                    elderCare *= 0.5
-                } else {
-                    guardrailAdjustmentMessage = String.format(
-                        "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 90%%, and other expenses by 10%%.",
-                        totalsavings, percentOfThreshold, baseTargetSavings
-                    )
-                    travel *= 0.10
-                    otherExpenses *= 0.90
-                    elderCare *= 0.5
+        if (neitherAlive) {
+            travel = 0.0
+            elderCare = 0.0
+            otherExpenses = 2.0 * propertyTaxes
+        } else {
+            if (isSingle) {
+                otherExpenses *= 0.70
+                travel *= 0.50
+            }
+
+            val isRetired = yearEndDate.isAfter(retirementDateSelf) && yearEndDate.isAfter(retirementDateSpouse)
+            percentBelowGuardrail = 0.0
+            guardrailAdjustmentMessage = null
+            if (isRetired && guardrailPct >= 0.0) {
+                val totalsavings = iraSavings + rothSavings + taxableSavings
+                val netCash = mortgage + elderCare + otherExpenses + travel - getOtherIncome() - socSecSelf - socSecSpouse - pensionSelf - pensionSpouse
+                val baseTargetSavings = netCash / 0.04
+                val triggerThreshold = baseTargetSavings * (guardrailPct / 100.0)
+                if (totalsavings < triggerThreshold) {
+                    percentBelowGuardrail = (triggerThreshold - totalsavings) / triggerThreshold
+                    val percentOfThreshold = if (baseTargetSavings > 0.0) (totalsavings / baseTargetSavings) * 100.0 else 0.0
+                    if (totalsavings < triggerThreshold * 0.8) {
+                        guardrailAdjustmentMessage = String.format(
+                            "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 95%%, and other expenses by 25%%.",
+                            totalsavings, percentOfThreshold, baseTargetSavings
+                        )
+                        travel *= 0.05
+                        otherExpenses *= 0.75
+                        elderCare *= 0.5
+                    } else {
+                        guardrailAdjustmentMessage = String.format(
+                            "Total savings $%,.2f is %.2f%% of guardrail threshold $%,.2f, cutting eldercare in half, travel by 90%%, and other expenses by 10%%.",
+                            totalsavings, percentOfThreshold, baseTargetSavings
+                        )
+                        travel *= 0.10
+                        otherExpenses *= 0.90
+                        elderCare *= 0.5
+                    }
                 }
             }
         }
@@ -1685,6 +1695,8 @@ class YearRow(
         result["year"] = year
         result["age"] = ageSelf
         result["age_spouse"] = ageSpouse
+        result["death_age_self"] = deathAgeSelf
+        result["death_age_spouse"] = deathAgeSpouse
         result["savings"] = getTotalSavings()
         result["cost_basis"] = taxableCostBasis
         result["salary"] = salarySelf + salarySpouse
@@ -1772,7 +1784,8 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
         val inflationStdDev = baseFormData.getDouble("inflation_std_dev", 1.25) / 100.0
 
         val startAge = min(firstRow.ageSelf, firstRow.ageSpouse)
-        val forecastYears = lifetime + 1 - startAge
+        val maxForecastAge = max(lifetime + 40, 100)
+        val forecastYears = maxForecastAge - startAge + 5
 
         val roiPct = baseFormData.getDouble("investment_return", 6.0) / 100.0
         val infPct = baseFormData.getDouble("inflation", 2.25) / 100.0
@@ -1787,11 +1800,14 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
         for (runIdx in 0 until numSimulations) {
             val runYears = mutableListOf<YearRow>()
             var curYear: YearRow? = null
-            val dSelf = max(minDeathSelf, 85.0 + 8.0 * generateStandardNormalRandom())
-            val dSpouse = max(minDeathSpouse, 85.0 + 8.0 * generateStandardNormalRandom())
+            val dSelf = max(minDeathSelf, lifetime.toDouble() + 8.0 * generateStandardNormalRandom())
+            val dSpouse = max(minDeathSpouse, lifetime.toDouble() + 8.0 * generateStandardNormalRandom())
             var i = 0
             while (true) {
-                if (curYear != null && (curYear.ageSelf >= lifetime && curYear.ageSpouse >= lifetime)) {
+                if (curYear != null && 
+                    curYear.ageSelf > dSelf && 
+                    curYear.ageSpouse > dSpouse && 
+                    min(curYear.ageSelf, curYear.ageSpouse) > 100) {
                     break
                 }
                 if (i >= forecastYears) break // bounds safety
