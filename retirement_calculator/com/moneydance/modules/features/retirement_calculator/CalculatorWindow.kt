@@ -54,6 +54,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "inflation" to "2.25",
         "lifetime" to "100",
         "lifetime_locked" to "false",
+        "show_savings_types" to "false",
         "investment_std_dev" to "15",
         "inflation_std_dev" to "1.25",
         "raise" to "3",
@@ -112,6 +113,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         // Initial populate from default data
         setFormData(defaultData)
         
+        // Try to restore configuration from Moneydance localStorage
+        restoreConfigFromLocalStorage()
+        
         // Read account balances from MoneyDance if possible
         loadMoneyDanceBalances()
         
@@ -119,6 +123,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         recalc()
         
         defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+        
+        // Save config when window is closed
+        this.addWindowListener(object : java.awt.event.WindowAdapter() {
+            override fun windowClosing(e: java.awt.event.WindowEvent?) {
+                saveConfigToLocalStorage()
+            }
+        })
+        
         pack()
         setLocationRelativeTo(null)
         
@@ -318,7 +330,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         top.add(raiseF)
         
         top.add(Box.createHorizontalStrut(10))
-        val optBtn = JButton("Optimize SocSec / Pension")
+        val optBtn = JButton("Optimize")
         optBtn.addActionListener { runSocialSecurityPensionOptimization() }
         top.add(optBtn)
         
@@ -454,6 +466,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
         addCheck("Stack income / expense", "stack_incomes")
         addCheck("Stack savings", "stack_savings")
+        addCheck("Show Savings types", "show_savings_types")
         addCheck("Show Distribution types", "show_distros")
         addCheck("Display Inflation & ROI", "show_inflation_roi")
 
@@ -1316,20 +1329,44 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     // JTable Drawing & Formatting
     private fun updateTable() {
-        val cols = mutableListOf(
-            "Year", "Age", "Spouse Age", "Savings", 
-            "Salary", "SS/Pension", "ROI", "Distrib", 
-            "Taxes", "Housing", "Travel & Eldercare", "Other Spending"
-        )
+        val cols = mutableListOf<String>()
+        cols.add("Year")
+        cols.add("Age")
+        cols.add("Spouse Age")
+        cols.add("Savings")
+        
+        val showSavingsTypes = checkboxes["show_savings_types"]?.isSelected == true
+        if (showSavingsTypes) {
+            cols.add("IRA")
+            cols.add("Roth")
+            cols.add("Taxable")
+            cols.add("DAF")
+        }
         
         val showDist = checkboxes["show_distros"]?.isSelected == true
         if (showDist) {
-            cols.add(4, "Taxable Basis")
-            cols.add(6, "Dividends")
-            cols.add(10, "IRA Distro")
-            cols.add(11, "Roth Distro")
-            cols.add(12, "Other Distro")
+            cols.add("Taxable Basis")
         }
+        
+        cols.add("Salary")
+        if (showDist) {
+            cols.add("Dividends")
+        }
+        
+        cols.add("SS/Pension")
+        cols.add("ROI")
+        cols.add("Distrib")
+        
+        if (showDist) {
+            cols.add("IRA Distro")
+            cols.add("Roth Distro")
+            cols.add("Taxable Distro")
+        }
+        
+        cols.add("Taxes")
+        cols.add("Housing")
+        cols.add("Travel & Eldercare")
+        cols.add("Other Spending")
         
         val showInfl = checkboxes["show_inflation_roi"]?.isSelected == true
         if (showInfl) {
@@ -1340,7 +1377,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val colNames = cols.toTypedArray()
         tableModel.setDataVector(emptyArray<Array<Any>>(), colNames)
         
-        val df = DecimalFormat("$#,##0.00")
+        val df = DecimalFormat("$#,##0")
         val pctDf = DecimalFormat("0.00%")
         
         for (rowData in currentResults) {
@@ -1364,6 +1401,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             }
             
             v.add(df.format(rowData["savings"]))
+            
+            if (showSavingsTypes) {
+                v.add(df.format(rowData["ira_savings"]))
+                v.add(df.format(rowData["roth_savings"]))
+                v.add(df.format(rowData["other_savings"]))
+                v.add(df.format(rowData["daf_savings"]))
+            }
             
             if (showDist) {
                 v.add(df.format(rowData["cost_basis"]))
@@ -1398,6 +1442,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             resultTable.columnModel.getColumn(i).cellRenderer = renderer
         }
         
+        // Custom Table header rendering
+        resultTable.tableHeader.defaultRenderer = CustomHeaderRenderer()
+        
         resultTable.revalidate()
     }
 
@@ -1425,6 +1472,46 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             } catch (e: Exception) {
                 JOptionPane.showMessageDialog(this, "Error saving config: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
             }
+        }
+    }
+
+    fun saveConfigToLocalStorage() {
+        try {
+            val data = getFormData()
+            val sb = java.lang.StringBuilder()
+            sb.append("[")
+            var first = true
+            for ((k, v) in data) {
+                if (!first) sb.append(",\n")
+                first = false
+                sb.append("[\"").append(k.replace("\"", "\\\"")).append("\",\"").append(v.replace("\"", "\\\"")).append("\"]")
+            }
+            sb.append("]")
+            
+            val localStorage = mdBook.javaClass.getMethod("getLocalStorage").invoke(mdBook)
+            localStorage.javaClass.getMethod("put", String::class.java, String::class.java).invoke(localStorage, "retirement_calculator_config", sb.toString())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun restoreConfigFromLocalStorage() {
+        try {
+            val localStorage = mdBook.javaClass.getMethod("getLocalStorage").invoke(mdBook)
+            val content = localStorage.javaClass.getMethod("get", String::class.java).invoke(localStorage, "retirement_calculator_config") as? String
+            if (content != null && content.isNotEmpty()) {
+                val map = mutableMapOf<String, String>()
+                val regex = Regex("""\[\s*"(.*?)"\s*,\s*"(.*?)"\s*\]""")
+                val matches = regex.findAll(content)
+                for (m in matches) {
+                    val key = m.groupValues[1].replace("\\\"", "\"")
+                    val valStr = m.groupValues[2].replace("\\\"", "\"")
+                    map[key] = valStr
+                }
+                setFormData(map)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -2061,12 +2148,6 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         val cleanStr = value?.toString()?.replace("$", "")?.replace(",", "")?.replace("%", "")?.trim() ?: ""
         val doubleVal = cleanStr.toDoubleOrNull() ?: 0.0
         
-        // Negative savings / ordinary values drop below zero -> RED
-        // Positive distributions -> RED (since they drain assets)
-        if ((!isDistro && doubleVal < 0.0) || (isDistro && doubleVal > 0.0)) {
-            cell.foreground = Color.RED
-        }
-        
         // Highlight Year column red if a guardrail message is triggered
         if (colName == "Year") {
             val msg = rowData["guardrail_msg"] as? String ?: ""
@@ -2075,20 +2156,30 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
             }
         }
         
-        // Compare with previous row for orange drop alerts
+        var prevVal = 0.0
         if (row > 0 && row - 1 < tableData.size) {
             val prevRow = tableData[row - 1]
             val key = colName.lowercase().replace(" ", "_").replace("%", "pct").replace("&", "").replace("__", "_")
             val rawPrev = prevRow[key]
-            val prevVal = when (rawPrev) {
+            prevVal = when (rawPrev) {
                 is Number -> rawPrev.toDouble()
                 else -> 0.0
             }
-            if (!isDistro && doubleVal < prevVal && doubleVal != 0.0) {
+        }
+
+        if (isDistro) {
+            if (doubleVal < 0.0) {
+                cell.foreground = Color(46, 125, 50) // Green if the distribution is negative
+            } else if (doubleVal > 0.0 && doubleVal > prevVal && row > 0) {
                 if (!isSelected) {
-                    cell.foreground = Color.ORANGE
+                    cell.foreground = Color.ORANGE // Orange if greater than zero AND value increased
                 }
-            } else if (isDistro && doubleVal > prevVal && doubleVal != 0.0) {
+            }
+        } else {
+            // Negative savings / ordinary values drop below zero -> RED
+            if (doubleVal < 0.0) {
+                cell.foreground = Color.RED
+            } else if (doubleVal < prevVal && doubleVal != 0.0 && row > 0) {
                 if (!isSelected) {
                     cell.foreground = Color.ORANGE
                 }
@@ -2097,7 +2188,7 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         
         // Tooltip formatting
         val isSavingsCol = colName in setOf(
-            "Savings", "Taxable Basis", "ROI", "Distrib", "IRA Distro", "Roth Distro", "Other Distro"
+            "Savings", "IRA", "Roth", "Taxable", "DAF", "Taxable Basis", "ROI", "Distrib", "IRA Distro", "Roth Distro", "Taxable Distro"
         )
         
         when {
@@ -2233,6 +2324,40 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         } else {
             cell.horizontalAlignment = SwingConstants.RIGHT
         }
+        
+        return cell
+    }
+}
+
+class CustomHeaderRenderer : DefaultTableCellRenderer() {
+    init {
+        horizontalAlignment = SwingConstants.CENTER
+        border = javax.swing.UIManager.getBorder("TableHeader.cellBorder") ?: javax.swing.border.LineBorder(Color.GRAY)
+    }
+
+    override fun getTableCellRendererComponent(
+        table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int
+    ): Component {
+        val cell = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+        
+        val colName = value?.toString() ?: ""
+        
+        val savingsCols = setOf("Savings", "IRA", "Roth", "Taxable", "DAF", "Taxable Basis")
+        val incomeCols = setOf("Salary", "Dividends", "SS/Pension")
+        val distroCols = setOf("Distrib", "IRA Distro", "Roth Distro", "Taxable Distro")
+        val expenseCols = setOf("Taxes", "Housing", "Travel & Eldercare", "Other Spending")
+        
+        val bgColor = when {
+            colName in savingsCols -> Color(220, 235, 252) // Soft pastel blue
+            colName in incomeCols -> Color(225, 245, 225)  // Soft pastel green
+            colName in distroCols -> Color(255, 240, 225)  // Soft pastel orange/peach
+            colName in expenseCols -> Color(255, 225, 225) // Soft pastel red/pink
+            else -> javax.swing.UIManager.getColor("TableHeader.background") ?: Color(240, 240, 240)
+        }
+        
+        cell.background = bgColor
+        cell.foreground = javax.swing.UIManager.getColor("TableHeader.foreground") ?: Color.BLACK
+        cell.font = table.font.deriveFont(java.awt.Font.BOLD)
         
         return cell
     }

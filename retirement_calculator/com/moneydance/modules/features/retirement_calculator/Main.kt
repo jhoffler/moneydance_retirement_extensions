@@ -60,6 +60,7 @@ class Main : FeatureModule() {
 
     @Synchronized
     fun closeConsole() {
+        calculatorWindow?.saveConfigToLocalStorage()
         calculatorWindow?.isVisible = false
         calculatorWindow?.dispose()
         calculatorWindow = null
