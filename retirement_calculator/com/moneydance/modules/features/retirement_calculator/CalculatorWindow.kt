@@ -1332,7 +1332,6 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val cols = mutableListOf<String>()
         cols.add("Year")
         cols.add("Age")
-        cols.add("Spouse Age")
         cols.add("Savings")
         
         val showSavingsTypes = checkboxes["show_savings_types"]?.isSelected == true
@@ -1349,12 +1348,11 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         
         cols.add("Salary")
-        if (showDist) {
-            cols.add("Dividends")
-        }
-        
         cols.add("SS/Pension")
-        cols.add("ROI")
+        if (showDist) {
+            cols.add("Div / Int Taxable")
+        }
+        cols.add("Gains")
         cols.add("Distrib")
         
         if (showDist) {
@@ -1386,19 +1384,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             
             val ageSelfVal = (rowData["age"] as? Number)?.toInt() ?: 0
             val deathAgeSelfVal = (rowData["death_age_self"] as? Number)?.toDouble() ?: Double.MAX_VALUE
-            if (ageSelfVal > deathAgeSelfVal) {
-                v.add("-")
-            } else {
-                v.add(ageSelfVal.toString())
-            }
+            val selfAgeStr = if (ageSelfVal > deathAgeSelfVal) "-" else ageSelfVal.toString()
             
             val ageSpouseVal = (rowData["age_spouse"] as? Number)?.toInt() ?: 0
             val deathAgeSpouseVal = (rowData["death_age_spouse"] as? Number)?.toDouble() ?: Double.MAX_VALUE
-            if (ageSpouseVal > deathAgeSpouseVal) {
-                v.add("-")
-            } else {
-                v.add(ageSpouseVal.toString())
-            }
+            val spouseAgeStr = if (ageSpouseVal > deathAgeSpouseVal) "-" else ageSpouseVal.toString()
+            
+            v.add("$selfAgeStr/$spouseAgeStr")
             
             v.add(df.format(rowData["savings"]))
             
@@ -1413,10 +1405,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 v.add(df.format(rowData["cost_basis"]))
             }
             v.add(df.format(rowData["salary"]))
-            if (showDist) {
-                v.add(df.format(rowData["dividends"]))
-            }
             v.add(df.format(rowData["ss"]))
+            if (showDist) {
+                val divVal = (rowData["taxable_dividends"] as? Number)?.toDouble() ?: 0.0
+                val intVal = (rowData["taxable_interest"] as? Number)?.toDouble() ?: 0.0
+                v.add(df.format(divVal + intVal))
+            }
             v.add(df.format(rowData["roi"]))
             v.add(df.format(rowData["distro"]))
             if (showDist) {
@@ -2188,7 +2182,7 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         
         // Tooltip formatting
         val isSavingsCol = colName in setOf(
-            "Savings", "IRA", "Roth", "Taxable", "DAF", "Taxable Basis", "ROI", "Distrib", "IRA Distro", "Roth Distro", "Taxable Distro"
+            "Savings", "IRA", "Roth", "Taxable", "DAF", "Taxable Basis", "Gains", "Distrib", "IRA Distro", "Roth Distro", "Taxable Distro"
         )
         
         when {
@@ -2229,54 +2223,110 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                     </html>""".trimIndent()
             }
             isSavingsCol -> {
-                val iraBal = fmt(rowData["ira_savings"])
-                val iraCashVal = fmt(rowData["ira_cash"])
-                val iraRoi = fmt(rowData["ira_roi"])
-                val iraDist = fmt(rowData["ira_distro"])
-                val iraNetVal = ((rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0)
-                val iraNet = DecimalFormat("$#,##0.00").format(iraNetVal)
-                
-                val rothBal = fmt(rowData["roth_savings"])
-                val rothCashVal = fmt(rowData["roth_cash"])
-                val rothRoi = fmt(rowData["roth_roi"])
-                val rothDist = fmt(rowData["roth_distro"])
-                val rothNetVal = ((rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["roth_distro"] as? Number)?.toDouble() ?: 0.0)
-                val rothNet = DecimalFormat("$#,##0.00").format(rothNetVal)
-                
-                val otherBal = fmt(rowData["other_savings"])
-                val otherCashVal = fmt(rowData["other_cash"])
-                val otherRoi = fmt(rowData["other_roi"])
-                val otherDist = fmt(rowData["other_distro"])
-                val otherNetVal = ((rowData["other_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["other_distro"] as? Number)?.toDouble() ?: 0.0)
-                val otherNet = DecimalFormat("$#,##0.00").format(otherNetVal)
-                
-                val dafBal = fmt(rowData["daf_savings"])
-                val dafCashVal = "$0.00"
-                val dafRoi = fmt(rowData["daf_roi"])
-                val dafDist = fmt(rowData["daf_distro"])
-                val dafContrib = (rowData["daf_contrib"] as? Number)?.toDouble() ?: 0.0
-                val dafNetVal = ((rowData["daf_roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["daf_distro"] as? Number)?.toDouble() ?: 0.0) + dafContrib
-                val dafNet = DecimalFormat("$#,##0.00").format(dafNetVal)
-                
-                val totBal = fmt(rowData["savings"])
-                val totCashVal = fmt(
-                    ((rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0) +
-                    ((rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0) +
-                    ((rowData["other_cash"] as? Number)?.toDouble() ?: 0.0)
-                )
-                val totRoi = fmt(rowData["roi"])
-                val totDist = fmt(rowData["distro"])
-                val totNetVal = ((rowData["roi"] as? Number)?.toDouble() ?: 0.0) - ((rowData["distro"] as? Number)?.toDouble() ?: 0.0)
-                val totNet = DecimalFormat("$#,##0.00").format(totNetVal)
+                val iraBalVal = (rowData["ira_savings"] as? Number)?.toDouble() ?: 0.0
+                val iraCashVal = (rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0
+                val iraNonCashVal = max(0.0, iraBalVal - iraCashVal)
+                val iraRoiVal = (rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0
+                val iraInterest = iraCashVal * INTEREST_RATE
+                val iraDividends = iraNonCashVal * DIVIDEND_RATE
+                val iraDistVal = (rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0
+                val iraContrib = if (iraDistVal < 0.0) -iraDistVal else 0.0
+                val iraDist = if (iraDistVal > 0.0) iraDistVal else 0.0
+                val iraNetVal = iraRoiVal + iraInterest + iraDividends - iraDist + iraContrib
+
+                val rothBalVal = (rowData["roth_savings"] as? Number)?.toDouble() ?: 0.0
+                val rothCashVal = (rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0
+                val rothNonCashVal = max(0.0, rothBalVal - rothCashVal)
+                val rothRoiVal = (rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0
+                val rothInterest = rothCashVal * INTEREST_RATE
+                val rothDividends = rothNonCashVal * DIVIDEND_RATE
+                val rothDistVal = (rowData["roth_distro"] as? Number)?.toDouble() ?: 0.0
+                val rothContrib = if (rothDistVal < 0.0) -rothDistVal else 0.0
+                val rothDist = if (rothDistVal > 0.0) rothDistVal else 0.0
+                val rothNetVal = rothRoiVal + rothInterest + rothDividends - rothDist + rothContrib
+
+                val otherBalVal = (rowData["other_savings"] as? Number)?.toDouble() ?: 0.0
+                val otherCashVal = (rowData["other_cash"] as? Number)?.toDouble() ?: 0.0
+                val otherNonCashVal = max(0.0, otherBalVal - otherCashVal)
+                val otherRoiVal = (rowData["other_roi"] as? Number)?.toDouble() ?: 0.0
+                val otherInterest = otherCashVal * INTEREST_RATE
+                val otherDividends = otherNonCashVal * DIVIDEND_RATE
+                val otherDistVal = (rowData["other_distro"] as? Number)?.toDouble() ?: 0.0
+                val otherContrib = if (otherDistVal < 0.0) -otherDistVal else 0.0
+                val otherDist = if (otherDistVal > 0.0) otherDistVal else 0.0
+                val otherNetVal = otherRoiVal + otherInterest + otherDividends - otherDist + otherContrib
+
+                val dafBalVal = (rowData["daf_savings"] as? Number)?.toDouble() ?: 0.0
+                val dafRoiVal = (rowData["daf_roi"] as? Number)?.toDouble() ?: 0.0
+                val dafInterest = 0.0
+                val dafDividends = 0.0
+                val dafDistVal = (rowData["daf_distro"] as? Number)?.toDouble() ?: 0.0
+                val dafContribVal = (rowData["daf_contrib"] as? Number)?.toDouble() ?: 0.0
+                val dafContrib = dafContribVal + (if (dafDistVal < 0.0) -dafDistVal else 0.0)
+                val dafDist = if (dafDistVal > 0.0) dafDistVal else 0.0
+                val dafNetVal = dafRoiVal + dafInterest + dafDividends - dafDist + dafContrib
+
+                val totBalVal = (rowData["savings"] as? Number)?.toDouble() ?: 0.0
+                val totCashVal = iraCashVal + rothCashVal + otherCashVal
+                val totRoiVal = (rowData["roi"] as? Number)?.toDouble() ?: 0.0
+                val totInterest = iraInterest + rothInterest + otherInterest
+                val totDividends = iraDividends + rothDividends + otherDividends
+                val totContrib = iraContrib + rothContrib + otherContrib + dafContrib
+                val totDist = iraDist + rothDist + otherDist + dafDist
+                val totNetVal = totRoiVal + totInterest + totDividends - totDist + totContrib
                 
                 cell.toolTipText = """<html>
                     <table border='0' cellpadding='2' cellspacing='3'>
-                    <tr><th></th><th align='right'>Total Balance</th><th align='right'>Cash Balance</th><th align='right'>ROI</th><th align='right'>Distribution</th><th align='right'>Net</th></tr>
-                    <tr><td><b>IRA:</b></td><td align='right'>$iraBal</td><td align='right'>$iraCashVal</td><td align='right'>$iraRoi</td><td align='right'>$iraDist</td><td align='right'>$iraNet</td></tr>
-                    <tr><td><b>Roth:</b></td><td align='right'>$rothBal</td><td align='right'>$rothCashVal</td><td align='right'>$rothRoi</td><td align='right'>$rothDist</td><td align='right'>$rothNet</td></tr>
-                    <tr><td><b>Other:</b></td><td align='right'>$otherBal</td><td align='right'>$otherCashVal</td><td align='right'>$otherRoi</td><td align='right'>$otherDist</td><td align='right'>$otherNet</td></tr>
-                    <tr><td><b>DAF:</b></td><td align='right'>$dafBal</td><td align='right'>$dafCashVal</td><td align='right'>$dafRoi</td><td align='right'>$dafDist</td><td align='right'>$dafNet</td></tr>
-                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>$totBal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totCashVal</b></td><td style='border-top: 1px solid black;' align='right'><b>$totRoi</b></td><td style='border-top: 1px solid black;' align='right'><b>$totDist</b></td><td style='border-top: 1px solid black;' align='right'><b>$totNet</b></td></tr>
+                    <tr><th></th><th align='right'>Total Balance</th><th align='right'>Cash Balance</th><th align='right'>Gains</th><th align='right'>Div / Int</th><th align='right'>Contribution</th><th align='right'>Distribution</th><th align='right'>Net</th></tr>
+                    <tr><td><b>IRA:</b></td><td align='right'>${fmt(iraBalVal)}</td><td align='right'>${fmt(iraCashVal)}</td><td align='right'>${fmt(iraRoiVal)}</td><td align='right'>${fmt(iraDividends + iraInterest)}</td><td align='right'>${fmt(iraContrib)}</td><td align='right'>${fmt(iraDist)}</td><td align='right'>${fmt(iraNetVal)}</td></tr>
+                    <tr><td><b>Roth:</b></td><td align='right'>${fmt(rothBalVal)}</td><td align='right'>${fmt(rothCashVal)}</td><td align='right'>${fmt(rothRoiVal)}</td><td align='right'>${fmt(rothDividends + rothInterest)}</td><td align='right'>${fmt(rothContrib)}</td><td align='right'>${fmt(rothDist)}</td><td align='right'>${fmt(rothNetVal)}</td></tr>
+                    <tr><td><b>Other:</b></td><td align='right'>${fmt(otherBalVal)}</td><td align='right'>${fmt(otherCashVal)}</td><td align='right'>${fmt(otherRoiVal)}</td><td align='right'>${fmt(otherDividends + otherInterest)}</td><td align='right'>${fmt(otherContrib)}</td><td align='right'>${fmt(otherDist)}</td><td align='right'>${fmt(otherNetVal)}</td></tr>
+                    <tr><td><b>DAF:</b></td><td align='right'>${fmt(dafBalVal)}</td><td align='right'>$0.00</td><td align='right'>${fmt(dafRoiVal)}</td><td align='right'>${fmt(dafDividends + dafInterest)}</td><td align='right'>${fmt(dafContrib)}</td><td align='right'>${fmt(dafDist)}</td><td align='right'>${fmt(dafNetVal)}</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totBalVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totCashVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totRoiVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totDividends + totInterest)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totContrib)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totDist)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totNetVal)}</b></td></tr>
+                    </table>
+                    </html>""".trimIndent()
+            }
+            colName == "Div / Int Taxable" -> {
+                val iraBalVal = (rowData["ira_savings"] as? Number)?.toDouble() ?: 0.0
+                val iraCashVal = (rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0
+                val iraNonCashVal = max(0.0, iraBalVal - iraCashVal)
+                val iraRoiVal = (rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0
+                val iraInterest = iraCashVal * INTEREST_RATE
+                val iraDividends = iraNonCashVal * DIVIDEND_RATE
+
+                val rothBalVal = (rowData["roth_savings"] as? Number)?.toDouble() ?: 0.0
+                val rothCashVal = (rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0
+                val rothNonCashVal = max(0.0, rothBalVal - rothCashVal)
+                val rothRoiVal = (rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0
+                val rothInterest = rothCashVal * INTEREST_RATE
+                val rothDividends = rothNonCashVal * DIVIDEND_RATE
+
+                val otherBalVal = (rowData["other_savings"] as? Number)?.toDouble() ?: 0.0
+                val otherCashVal = (rowData["other_cash"] as? Number)?.toDouble() ?: 0.0
+                val otherNonCashVal = max(0.0, otherBalVal - otherCashVal)
+                val otherRoiVal = (rowData["other_roi"] as? Number)?.toDouble() ?: 0.0
+                val otherInterest = otherCashVal * INTEREST_RATE
+                val otherDividends = otherNonCashVal * DIVIDEND_RATE
+
+                val dafBalVal = (rowData["daf_savings"] as? Number)?.toDouble() ?: 0.0
+                val dafRoiVal = (rowData["daf_roi"] as? Number)?.toDouble() ?: 0.0
+                val dafInterest = 0.0
+                val dafDividends = 0.0
+
+                val totBalVal = (rowData["savings"] as? Number)?.toDouble() ?: 0.0
+                val totCashVal = iraCashVal + rothCashVal + otherCashVal
+                val totRoiVal = (rowData["roi"] as? Number)?.toDouble() ?: 0.0
+                val totInterest = iraInterest + rothInterest + otherInterest
+                val totDividends = iraDividends + rothDividends + otherDividends
+
+                cell.toolTipText = """<html>
+                    <table border='0' cellpadding='2' cellspacing='3'>
+                    <tr><th></th><th align='right'>Total Balance</th><th align='right'>Cash Balance</th><th align='right'>Gains</th><th align='right'>Dividends</th><th align='right'>Interest</th></tr>
+                    <tr><td><b>IRA:</b></td><td align='right'>${fmt(iraBalVal)}</td><td align='right'>${fmt(iraCashVal)}</td><td align='right'>${fmt(iraRoiVal)}</td><td align='right'>${fmt(iraDividends)}</td><td align='right'>${fmt(iraInterest)}</td></tr>
+                    <tr><td><b>Roth:</b></td><td align='right'>${fmt(rothBalVal)}</td><td align='right'>${fmt(rothCashVal)}</td><td align='right'>${fmt(rothRoiVal)}</td><td align='right'>${fmt(rothDividends)}</td><td align='right'>${fmt(rothInterest)}</td></tr>
+                    <tr><td><b>Other:</b></td><td align='right'>${fmt(otherBalVal)}</td><td align='right'>${fmt(otherCashVal)}</td><td align='right'>${fmt(otherRoiVal)}</td><td align='right'>${fmt(otherDividends)}</td><td align='right'>${fmt(otherInterest)}</td></tr>
+                    <tr><td><b>DAF:</b></td><td align='right'>${fmt(dafBalVal)}</td><td align='right'>$0.00</td><td align='right'>${fmt(dafRoiVal)}</td><td align='right'>${fmt(dafDividends)}</td><td align='right'>${fmt(dafInterest)}</td></tr>
+                    <tr style='border-top: 1px solid black;'><td style='border-top: 1px solid black;'><b>Total:</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totBalVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totCashVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totRoiVal)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totDividends)}</b></td><td style='border-top: 1px solid black;' align='right'><b>${fmt(totInterest)}</b></td></tr>
                     </table>
                     </html>""".trimIndent()
             }
@@ -2343,7 +2393,7 @@ class CustomHeaderRenderer : DefaultTableCellRenderer() {
         val colName = value?.toString() ?: ""
         
         val savingsCols = setOf("Savings", "IRA", "Roth", "Taxable", "DAF", "Taxable Basis")
-        val incomeCols = setOf("Salary", "Dividends", "SS/Pension")
+        val incomeCols = setOf("Salary", "Div / Int Taxable", "SS/Pension")
         val distroCols = setOf("Distrib", "IRA Distro", "Roth Distro", "Taxable Distro")
         val expenseCols = setOf("Taxes", "Housing", "Travel & Eldercare", "Other Spending")
         
