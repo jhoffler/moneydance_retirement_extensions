@@ -53,7 +53,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "investment_return" to "6",
         "inflation" to "2.25",
         "lifetime" to "100",
+        "lifetime_spouse" to "100",
         "lifetime_locked" to "false",
+        "lifetime_spouse_locked" to "false",
         "show_savings_types" to "false",
         "investment_std_dev" to "15",
         "inflation_std_dev" to "1.25",
@@ -83,9 +85,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "mortgage" to "2000",
         "mortgage_end" to "12/31/2034",
         "travel" to "25000",
-        "travel_end" to "12/31/2045",
-        "eldercare" to "10000",
-        "eldercare_start" to "01/01/2050",
+        "eldercare_light_years" to "2",
+        "eldercare_light_cost" to "40000",
+        "eldercare_acuity_years" to "1",
+        "eldercare_acuity_cost" to "180000",
+        "eldercare_facility_years" to "2",
+        "eldercare_facility_cost" to "120000",
         "daf_distro" to "0",
         "daf_excess_pct" to "50",
         "start_ira_savings" to "1000000",
@@ -211,12 +216,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         add(splitPane, BorderLayout.CENTER)
     }
 
-    // Helper to create grid layouts
-    private fun createGridPanel(rows: Int, cols: Int): JPanel {
-        val p = JPanel(GridLayout(rows, cols, 5, 5))
-        p.border = EmptyBorder(10, 10, 10, 10)
-        return p
-    }
+
 
     private fun addFieldRow(p: JPanel, labelText: String, key: String) {
         p.add(JLabel(labelText))
@@ -272,7 +272,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         textFields["lifetime"] = tfLifetime
         
         val cbLifetimeLock = JCheckBox()
-        cbLifetimeLock.toolTipText = "Lock life expectancy"
+        cbLifetimeLock.toolTipText = "Lock Self life expectancy"
         checkboxes["lifetime_locked"] = cbLifetimeLock
         cbLifetimeLock.addActionListener {
             tfLifetime.isEnabled = !cbLifetimeLock.isSelected
@@ -280,7 +280,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         
         val labelPanel = JPanel(BorderLayout(5, 0))
         labelPanel.add(cbLifetimeLock, BorderLayout.WEST)
-        labelPanel.add(JLabel("Life Expectancy:"), BorderLayout.CENTER)
+        labelPanel.add(JLabel("Self Life Expectancy:"), BorderLayout.CENTER)
         
         gbc.gridy = 1
         gbc.gridx = 0
@@ -290,26 +290,51 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         gbc.gridx = 1
         gbc.weightx = 0.7
         p.add(tfLifetime, gbc)
+
+        // Spouse Life Expectancy
+        val tfLifetimeSpouse = JTextField()
+        tfLifetimeSpouse.horizontalAlignment = JTextField.RIGHT
+        textFields["lifetime_spouse"] = tfLifetimeSpouse
+        
+        val cbLifetimeSpouseLock = JCheckBox()
+        cbLifetimeSpouseLock.toolTipText = "Lock Spouse life expectancy"
+        checkboxes["lifetime_spouse_locked"] = cbLifetimeSpouseLock
+        cbLifetimeSpouseLock.addActionListener {
+            tfLifetimeSpouse.isEnabled = !cbLifetimeSpouseLock.isSelected
+        }
+        
+        val labelPanelSpouse = JPanel(BorderLayout(5, 0))
+        labelPanelSpouse.add(cbLifetimeSpouseLock, BorderLayout.WEST)
+        labelPanelSpouse.add(JLabel("Spouse Life Expectancy:"), BorderLayout.CENTER)
+        
+        gbc.gridy = 2
+        gbc.gridx = 0
+        gbc.weightx = 0.3
+        p.add(labelPanelSpouse, gbc)
+        
+        gbc.gridx = 1
+        gbc.weightx = 0.7
+        p.add(tfLifetimeSpouse, gbc)
         
         val tfReturn = JTextField()
         tfReturn.horizontalAlignment = JTextField.RIGHT
         textFields["investment_return"] = tfReturn
-        addRow(2, "Investment Return (ROI) %:", tfReturn)
+        addRow(3, "Investment Return (ROI) %:", tfReturn)
         
         val tfReturnDev = JTextField()
         tfReturnDev.horizontalAlignment = JTextField.RIGHT
         textFields["investment_std_dev"] = tfReturnDev
-        addRow(3, "Investment Return Std Dev %:", tfReturnDev)
+        addRow(4, "Investment Return Std Dev %:", tfReturnDev)
         
         val tfInflation = JTextField()
         tfInflation.horizontalAlignment = JTextField.RIGHT
         textFields["inflation"] = tfInflation
-        addRow(4, "Inflation Rate %:", tfInflation)
+        addRow(5, "Inflation Rate %:", tfInflation)
         
         val tfInflationDev = JTextField()
         tfInflationDev.horizontalAlignment = JTextField.RIGHT
         textFields["inflation_std_dev"] = tfInflationDev
-        addRow(5, "Inflation Std Dev %:", tfInflationDev)
+        addRow(6, "Inflation Std Dev %:", tfInflationDev)
         
         val container = JPanel(BorderLayout())
         container.add(p, BorderLayout.NORTH)
@@ -377,55 +402,144 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         return JScrollPane(wrapper)
     }
 
+    private fun createGridBagPanel(): JPanel {
+        val p = JPanel(GridBagLayout())
+        p.border = EmptyBorder(10, 10, 10, 10)
+        return p
+    }
+
+    private fun addGridBagFieldRow(p: JPanel, labelText: String, key: String, row: Int) {
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+        gbc.gridy = row
+
+        // Label
+        gbc.gridx = 0
+        gbc.weightx = 0.85
+        p.add(JLabel(labelText), gbc)
+
+        // Text Field
+        gbc.gridx = 1
+        gbc.weightx = 0.15
+        val tf = JTextField(10)
+        tf.horizontalAlignment = JTextField.RIGHT
+        textFields[key] = tf
+        p.add(tf, gbc)
+    }
+
+    private fun addGridBagDateRow(p: JPanel, labelText: String, key: String, row: Int, df: com.moneydance.awt.JDateField) {
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+        gbc.gridy = row
+
+        // Label
+        gbc.gridx = 0
+        gbc.weightx = 0.85
+        p.add(JLabel(labelText), gbc)
+
+        // Date Field
+        gbc.gridx = 1
+        gbc.weightx = 0.15
+        dateFields[key] = df
+        p.add(df, gbc)
+    }
+
     private fun createExpensesPanel(): JScrollPane {
         val container = JPanel()
         container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
         container.border = EmptyBorder(10, 10, 10, 10)
 
         // Group 1: General Spending
-        val generalPanel = JPanel(GridLayout(3, 2, 5, 5))
+        val generalPanel = createGridBagPanel()
         generalPanel.border = TitledBorder("General Spending")
-        addFieldRow(generalPanel, "First Year Spending:", "start_other_spending")
-        addFieldRow(generalPanel, "Annual Travel:", "travel")
-        generalPanel.add(JLabel("Travel End Date:"))
+        addGridBagFieldRow(generalPanel, "First Year Spending:", "start_other_spending", 0)
+        addGridBagFieldRow(generalPanel, "Annual Travel:", "travel", 1)
         val trEnd = com.moneydance.awt.JDateField(com.infinitekind.util.CustomDateFormat("yyyy-MM-dd"))
-        dateFields["travel_end"] = trEnd
-        generalPanel.add(trEnd)
+        addGridBagDateRow(generalPanel, "Travel End Date:", "travel_end", 2, trEnd)
         container.add(generalPanel)
         container.add(Box.createVerticalStrut(10))
 
         // Group 2: Taxes
-        val taxPanel = JPanel(GridLayout(5, 2, 5, 5))
+        val taxPanel = createGridBagPanel()
         taxPanel.border = TitledBorder("Taxes")
-        addFieldRow(taxPanel, "Property Taxes:", "prop_taxes")
-        addFieldRow(taxPanel, "Payroll Tax Rate %:", "payroll_tax_rate")
-        addFieldRow(taxPanel, "Fed Std Deduction:", "fed_std_deduction")
-        addFieldRow(taxPanel, "State Std Deduction:", "state_std_deduction")
-        addFieldRow(taxPanel, "State Tax Rate %:", "state_tax_rate")
+        addGridBagFieldRow(taxPanel, "Property Taxes:", "prop_taxes", 0)
+        addGridBagFieldRow(taxPanel, "Payroll Tax Rate %:", "payroll_tax_rate", 1)
+        addGridBagFieldRow(taxPanel, "Fed Std Deduction:", "fed_std_deduction", 2)
+        addGridBagFieldRow(taxPanel, "State Std Deduction:", "state_std_deduction", 3)
+        addGridBagFieldRow(taxPanel, "State Tax Rate %:", "state_tax_rate", 4)
         container.add(taxPanel)
         container.add(Box.createVerticalStrut(10))
 
-        // Group 3: Housing & Future Care
-        val houseCarePanel = JPanel(GridLayout(4, 2, 5, 5))
-        houseCarePanel.border = TitledBorder("Housing & Future Care")
-        addFieldRow(houseCarePanel, "Monthly Mortgage:", "mortgage")
-        houseCarePanel.add(JLabel("Mortgage End Date:"))
+        // Group 3: Housing
+        val housingPanel = createGridBagPanel()
+        housingPanel.border = TitledBorder("Housing")
+        addGridBagFieldRow(housingPanel, "Monthly Mortgage:", "mortgage", 0)
         val mtgEnd = com.moneydance.awt.JDateField(com.infinitekind.util.CustomDateFormat("yyyy-MM-dd"))
-        dateFields["mortgage_end"] = mtgEnd
-        houseCarePanel.add(mtgEnd)
-        addFieldRow(houseCarePanel, "Monthly Eldercare:", "eldercare")
-        houseCarePanel.add(JLabel("Eldercare Start Date:"))
-        val ecStart = com.moneydance.awt.JDateField(com.infinitekind.util.CustomDateFormat("yyyy-MM-dd"))
-        dateFields["eldercare_start"] = ecStart
-        houseCarePanel.add(ecStart)
-        container.add(houseCarePanel)
+        addGridBagDateRow(housingPanel, "Mortgage End Date:", "mortgage_end", 1, mtgEnd)
+        container.add(housingPanel)
         container.add(Box.createVerticalStrut(10))
 
-        // Group 4: Donor Advised Fund
-        val dafPanel = JPanel(GridLayout(2, 2, 5, 5))
+        // Group 4: Future Care
+        val futureCarePanel = JPanel(GridBagLayout())
+        futureCarePanel.border = TitledBorder("Future Care")
+        
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+        
+        // Headers (Row 0)
+        gbc.gridy = 0
+        gbc.gridx = 0
+        gbc.weightx = 0.75
+        futureCarePanel.add(JLabel(""), gbc)
+        
+        gbc.gridx = 1
+        gbc.weightx = 0.08
+        futureCarePanel.add(JLabel("Years", SwingConstants.CENTER), gbc)
+        
+        gbc.gridx = 2
+        gbc.weightx = 0.17
+        futureCarePanel.add(JLabel("Cost", SwingConstants.CENTER), gbc)
+        
+        fun addFutureCareRow(row: Int, labelText: String, yearsKey: String, costKey: String) {
+            gbc.gridy = row
+            
+            // Label
+            gbc.gridx = 0
+            gbc.weightx = 0.75
+            futureCarePanel.add(JLabel(labelText), gbc)
+            
+            // Years
+            gbc.gridx = 1
+            gbc.weightx = 0.08
+            val tfYears = JTextField(5)
+            tfYears.horizontalAlignment = JTextField.RIGHT
+            textFields[yearsKey] = tfYears
+            futureCarePanel.add(tfYears, gbc)
+            
+            // Cost
+            gbc.gridx = 2
+            gbc.weightx = 0.17
+            val tfCost = JTextField(10)
+            tfCost.horizontalAlignment = JTextField.RIGHT
+            textFields[costKey] = tfCost
+            futureCarePanel.add(tfCost, gbc)
+        }
+        
+        addFutureCareRow(1, "Light Assistance:", "eldercare_light_years", "eldercare_light_cost")
+        addFutureCareRow(2, "High-Acuity Care:", "eldercare_acuity_years", "eldercare_acuity_cost")
+        addFutureCareRow(3, "Facility Care:", "eldercare_facility_years", "eldercare_facility_cost")
+        
+        container.add(futureCarePanel)
+        container.add(Box.createVerticalStrut(10))
+
+        // Group 5: Donor Advised Fund
+        val dafPanel = createGridBagPanel()
         dafPanel.border = TitledBorder("Donor Advised Fund (DAF)")
-        addFieldRow(dafPanel, "DAF Annual Dist:", "daf_distro")
-        addFieldRow(dafPanel, "DAF Excess Pct %:", "daf_excess_pct")
+        addGridBagFieldRow(dafPanel, "DAF Annual Dist:", "daf_distro", 0)
+        addGridBagFieldRow(dafPanel, "DAF Excess Pct %:", "daf_excess_pct", 1)
         container.add(dafPanel)
 
         val wrapper = JPanel(BorderLayout())
@@ -435,15 +549,15 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     private fun createSavingsPanel(): JScrollPane {
         textFields["start_taxable_lots"] = JTextField()
-        val p = createGridPanel(8, 2)
-        addFieldRow(p, "IRA Savings:", "start_ira_savings")
-        addFieldRow(p, "  IRA Cash Portion:", "start_ira_cash")
-        addFieldRow(p, "Roth Savings:", "start_roth_savings")
-        addFieldRow(p, "  Roth Cash Portion:", "start_roth_cash")
-        addFieldRow(p, "Other Savings (Brokerage):", "start_other_savings")
-        addFieldRow(p, "  Other Cash Portion:", "start_other_cash")
-        addFieldRow(p, "Taxable Cost Basis:", "start_taxable_cost_basis")
-        addFieldRow(p, "DAF Savings:", "start_daf_savings")
+        val p = createGridBagPanel()
+        addGridBagFieldRow(p, "IRA Savings:", "start_ira_savings", 0)
+        addGridBagFieldRow(p, "  IRA Cash Portion:", "start_ira_cash", 1)
+        addGridBagFieldRow(p, "Roth Savings:", "start_roth_savings", 2)
+        addGridBagFieldRow(p, "  Roth Cash Portion:", "start_roth_cash", 3)
+        addGridBagFieldRow(p, "Other Savings (Brokerage):", "start_other_savings", 4)
+        addGridBagFieldRow(p, "  Other Cash Portion:", "start_other_cash", 5)
+        addGridBagFieldRow(p, "Taxable Cost Basis:", "start_taxable_cost_basis", 6)
+        addGridBagFieldRow(p, "DAF Savings:", "start_daf_savings", 7)
         
         val container = JPanel(BorderLayout())
         container.add(p, BorderLayout.NORTH)
@@ -613,6 +727,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 if (k == "lifetime_locked") {
                     textFields["lifetime"]?.isEnabled = !cb.isSelected
                 }
+                if (k == "lifetime_spouse_locked") {
+                    textFields["lifetime_spouse"]?.isEnabled = !cb.isSelected
+                }
                 continue
             }
             val df = dateFields[k]
@@ -638,7 +755,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                 df.dateInt = y * 10000 + m * 100 + d
                             }
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         df.dateInt = 0
                     }
                 }
@@ -764,7 +881,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                                     val field = tracker.javaClass.getDeclaredField("availableShares")
                                                     field.isAccessible = true
                                                     field.getLong(tracker)
-                                                } catch (e: Exception) {
+                                                } catch (_: Exception) {
                                                     0L
                                                 }
                                                 if (remainingShares > 0L) {
@@ -794,19 +911,19 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                                         } else {
                                                             null
                                                         }
-                                                    } catch (e: Exception) {
+                                                    } catch (_: Exception) {
                                                         null
                                                     }
                                                     if (buySplit != null) {
                                                         val originalShares = try {
                                                             buySplit.javaClass.getMethod("getValue").invoke(buySplit) as Long
-                                                        } catch (e: Exception) {
+                                                        } catch (_: Exception) {
                                                             0L
                                                         }
                                                         var originalCostBasis = try {
                                                             val amt = buySplit.javaClass.getMethod("getAmount").invoke(buySplit) as Long
                                                             Math.abs(amt)
-                                                        } catch (e: Exception) {
+                                                        } catch (_: Exception) {
                                                             0L
                                                         }
                                                         if (originalCostBasis == 0L) {
@@ -815,7 +932,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                                                     .getDeclaredMethod("getCostBasis", com.infinitekind.moneydance.model.Account::class.java, com.infinitekind.moneydance.model.SplitTxn::class.java)
                                                                 method.isAccessible = true
                                                                 method.invoke(null, subAcct, buySplit) as Long
-                                                            } catch (e: Exception) {
+                                                            } catch (_: Exception) {
                                                                 0L
                                                             }
                                                         }
@@ -841,7 +958,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                                                         val rawName = subAcct.getAccountName() ?: "Stock"
                                                         val buyDate = try {
                                                             buySplit.javaClass.getMethod("getDateInt").invoke(buySplit) as Int
-                                                        } catch (e: Exception) {
+                                                        } catch (_: Exception) {
                                                             0
                                                         }
                                                         val yr = buyDate / 10000
@@ -946,16 +1063,17 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         currentResults.clear()
         
         var curYear: YearRow? = null
-        val lifetime = form.getInt("lifetime", 100)
+        val lifetimeSelf = form.getInt("lifetime", 100)
+        val lifetimeSpouse = form.getInt("lifetime_spouse", 100)
         
         while (true) {
             if (curYear != null && 
-                curYear.ageSelf > lifetime && 
-                curYear.ageSpouse > lifetime && 
+                curYear.ageSelf > lifetimeSelf && 
+                curYear.ageSpouse > lifetimeSpouse && 
                 min(curYear.ageSelf, curYear.ageSpouse) > 100) {
                 break
             }
-            val nextRow = YearRow(form, curYear, lifetime.toDouble(), lifetime.toDouble())
+            val nextRow = YearRow(form, curYear, lifetimeSelf.toDouble(), lifetimeSpouse.toDouble())
             currentResults.add(nextRow.toMap())
             curYear = nextRow
         }
@@ -976,7 +1094,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private fun runSocialSecurityPensionOptimization() {
         val baseFormData = try {
             getFormData()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             JOptionPane.showMessageDialog(this, "Please ensure all numeric settings are filled with valid values.", "Error", JOptionPane.ERROR_MESSAGE)
             return
         }
@@ -1414,7 +1532,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             v.add(df.format(rowData["roi"]))
             v.add(df.format(rowData["distro"]))
             if (showDist) {
-                v.add(df.format(rowData["ira_distro"]))
+                val iraDistVal = (rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0
+                val rmdVal = (rowData["rmd"] as? Number)?.toDouble() ?: 0.0
+                val formattedIra = df.format(iraDistVal)
+                if (iraDistVal > 0.01 && java.lang.Math.abs(iraDistVal - rmdVal) < 0.01) {
+                    v.add("<html><b>$formattedIra</b></html>")
+                } else {
+                    v.add(formattedIra)
+                }
                 v.add(df.format(rowData["roth_distro"]))
                 v.add(df.format(rowData["other_distro"]))
             }
@@ -1808,6 +1933,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val taxSS = getD("fed_taxable_ss")
             val stdDed = getD("standard_deduction")
             val dafContrib = getD("daf_contrib")
+            val totalDeds = getD("total_deductions")
+            val medicalDed = getD("deductible_medical")
             
             val taxableIntVal = getD("taxable_interest")
             val taxableDivVal = getD("taxable_dividends")
@@ -1825,13 +1952,18 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 }
                 append("      * Taxable Social Security: **").append(fmt(taxSS)).append("** (Gross SS: **").append(fmt(ssSelf + ssSp)).append("**)\n")
                 append("    * Deductions:\n")
-                if (dafContrib > 0.0) {
-                    append("      * Itemized Deduction: **-").append(fmt(dafContrib)).append("**\n")
-                    append("      * DAF Contribution: **-").append(fmt(dafContrib)).append("**\n")
+                if (totalDeds > stdDed + 0.01) {
+                    append("      * Itemized Deduction: **-").append(fmt(totalDeds)).append("**\n")
+                    if (dafContrib > 0.0) {
+                        append("        * DAF Contribution: **-").append(fmt(dafContrib)).append("**\n")
+                    }
+                    if (medicalDed > 0.0) {
+                        append("        * Medical Deduction (Eldercare): **-").append(fmt(medicalDed)).append("**\n")
+                    }
                 } else {
                     append("      * Standard Deduction: **-").append(fmt(stdDed)).append("**\n")
                     if (qcdVal > 0.0) {
-                        append("      * QCD Donation: **-").append(fmt(qcdVal)).append("**\n")
+                        append("        * QCD Donation: **-").append(fmt(qcdVal)).append("**\n")
                     }
                 }
             }
@@ -1858,9 +1990,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("</ul></li>")
                 append("<li>Deductions:")
                 append("<ul style=\"padding-left: 20px;\">")
-                if (dafContrib > 0.0) {
-                    append("<li>Itemized Deduction: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
-                    append("<li>DAF Contribution: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
+                if (totalDeds > stdDed + 0.01) {
+                    append("<li>Itemized Deduction: <strong>-").append(fmt(totalDeds)).append("</strong></li>")
+                    if (dafContrib > 0.0) {
+                        append("<li>DAF Contribution: <strong>-").append(fmt(dafContrib)).append("</strong></li>")
+                    }
+                    if (medicalDed > 0.0) {
+                        append("<li>Medical Deduction (Eldercare): <strong>-").append(fmt(medicalDed)).append("</strong></li>")
+                    }
                 } else {
                     append("<li>Standard Deduction: <strong>-").append(fmt(stdDed)).append("</strong></li>")
                     if (qcdVal > 0.0) {
@@ -2416,11 +2553,9 @@ class CustomHeaderRenderer : DefaultTableCellRenderer() {
 // 1. Savings Line/Area Graph Component
 class SavingsChartPanel : JPanel() {
     private var data: List<Map<String, Any>> = emptyList()
-    private var config: Map<String, String> = emptyMap()
 
     fun updateData(newData: List<Map<String, Any>>, newConfig: Map<String, String>) {
         data = newData
-        config = newConfig
         repaint()
     }
 

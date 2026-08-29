@@ -95,7 +95,7 @@ fun Map<String, String>.getLocalDate(key: String, default: LocalDate = LocalDate
         } else {
             LocalDate.parse(s)
         }
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         default
     }
 }
@@ -117,6 +117,7 @@ class YearRow(
     val yearEndTime: Long
     
     var inflationAdjustmentFactor: Double = 1.0
+    var ssInflationAdjustmentFactor: Double = 1.0
 
     val birthDateSelf: LocalDate
     val birthDateSpouse: LocalDate
@@ -210,6 +211,8 @@ class YearRow(
     var fedTotalTaxableIncome: Double = 0.0
 
     var standardDeduction: Double = 0.0
+    var deductibleMedical: Double = 0.0
+    var totalDeductionsClaimed: Double = 0.0
     var payrollTaxes: Double = 0.0
     var propertyTaxes: Double = 0.0
     var fedTaxes: Double = 0.0
@@ -312,7 +315,7 @@ class YearRow(
                     if (subParts.size == 3) {
                         val decodedName = try {
                             java.net.URLDecoder.decode(subParts[0], "UTF-8")
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             "Stock"
                         }
                         val basis = subParts[1].toDoubleOrNull() ?: 0.0
@@ -400,12 +403,15 @@ class YearRow(
 
     private fun calcInflationAdjustment(): Double {
         var factor = 1.0
+        var ssFactor = 1.0
         var cur = previousYear
         while (cur != null) {
             factor *= (1.0 + cur.inflationPct)
+            ssFactor *= (1.0 + max(0.0, cur.inflationPct))
             cur = cur.previousYear
         }
         inflationAdjustmentFactor = factor
+        ssInflationAdjustmentFactor = ssFactor
         return factor
     }
 
@@ -490,21 +496,39 @@ class YearRow(
         otherExpenses = formData.getDouble("start_other_spending", 30000.0) * inflationAdjustmentFactor
         val mortgageEnd = formData.getLocalDate("mortgage_end", LocalDate.of(2034, 12, 31))
         val travelEnd = formData.getLocalDate("travel_end", LocalDate.of(2045, 12, 31))
-        val elderCareStart = formData.getLocalDate("eldercare_start", LocalDate.of(2050, 1, 1))
-
+        val lightYears = formData.getInt("eldercare_light_years", 2)
         mortgage = formData.getDouble("mortgage", 2000.0) * fractionOfYearBefore(mortgageEnd) * 12.0
 
         val lastRetirementDate = if (retirementDateSelf.isAfter(retirementDateSpouse)) retirementDateSelf else retirementDateSpouse
         travel = formData.getDouble("travel", 25000.0) * fractionOfYearBefore(travelEnd) * fractionOfYearAfter(lastRetirementDate) * inflationAdjustmentFactor
-        
-        elderCare = formData.getDouble("eldercare", 10000.0) * fractionOfYearAfter(elderCareStart) * inflationAdjustmentFactor * 12.0
+        val lightCost = formData.getDouble("eldercare_light_cost", 40000.0)
+        val acuityYears = formData.getInt("eldercare_acuity_years", 1)
+        val acuityCost = formData.getDouble("eldercare_acuity_cost", 180000.0)
+        val facilityYears = formData.getInt("eldercare_facility_years", 2)
+        val facilityCost = formData.getDouble("eldercare_facility_cost", 120000.0)
 
-        val lifetime = formData.getInt("lifetime", 100)
-        if (ageOldest > lifetime - 3) {
-            elderCare *= 4.0
-        } else if (ageOldest > lifetime - 8) {
-            elderCare *= 2.0
+        fun calculatePersonEldercare(age: Int, deathAge: Double): Double {
+            if (age > deathAge) return 0.0
+            val ageD = age.toDouble()
+            val facilityBound = deathAge - facilityYears
+            if (ageD > facilityBound) {
+                return facilityCost
+            }
+            val acuityBound = facilityBound - acuityYears
+            if (ageD > acuityBound) {
+                return acuityCost
+            }
+            val lightBound = acuityBound - lightYears
+            if (ageD > lightBound) {
+                return lightCost
+            }
+            return 0.0
         }
+
+        val selfCareToday = calculatePersonEldercare(ageSelf, deathAgeSelf)
+        val spouseCareToday = calculatePersonEldercare(ageSpouse, deathAgeSpouse)
+
+        elderCare = (selfCareToday + spouseCareToday) * inflationAdjustmentFactor
 
         val neitherAlive = (ageSelf > deathAgeSelf) && (ageSpouse > deathAgeSpouse)
         val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
@@ -748,7 +772,6 @@ class YearRow(
             val isRoiNegative = investReturnPct < 0.0 || cumulativeRoi < 0.0
 
             val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
-            val unusedDeduction = max(0.0, standardDeduction - guaranteedOrdinary)
             val bracketCeiling = CAP_GAINS_RATES_FED[0].maxIncome * inflationAdjustmentFactor
             
             var taxableDistributionVal = 0.0
@@ -756,15 +779,17 @@ class YearRow(
             var rothConversionVal = 0.0
             var totalTax = 0.0
             var netCash = 0.0
+            var currentDeduction = standardDeduction
             
             for (iter in 0 until 10) {
+                val unusedDeduction = max(0.0, currentDeduction - guaranteedOrdinary)
                 val currentShortfall = targetNetCash + totalTax - fixedCash
                 if (currentShortfall <= 0.0) {
                     taxableDistributionVal = 0.0
                     iraDistributionVal = 0.0
                     
                     val netCapitalGains = 0.0
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary - standardDeduction)
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary - currentDeduction)
                     val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra)
@@ -777,6 +802,7 @@ class YearRow(
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = fixedCash - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
+                    currentDeduction = result.totalDeductions
                     break
                 }
                 
@@ -791,7 +817,7 @@ class YearRow(
                     }
                     
                     val netCapitalGains = simulateStockSale(taxableDistributionVal)
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - standardDeduction)
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - currentDeduction)
                     val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
                     rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
@@ -804,6 +830,7 @@ class YearRow(
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
+                    currentDeduction = result.totalDeductions
                 } else {
                     val taxFreeIraWithdrawal = min(currentShortfall, unusedDeduction)
                     val remainingShortfall = currentShortfall - taxFreeIraWithdrawal
@@ -812,7 +839,7 @@ class YearRow(
                     iraDistributionVal = taxFreeIraWithdrawal + taxableIraWithdrawal
                     
                     val netCapitalGains = simulateStockSale(taxableDistributionVal)
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - standardDeduction)
+                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - currentDeduction)
                     val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
                     rothConversionVal = max(0.0, conversionRoom)
                     val maxConvert = max(0.0, maxIra - iraDistributionVal)
@@ -825,6 +852,7 @@ class YearRow(
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
+                    currentDeduction = result.totalDeductions
                 }
             }
             
@@ -999,6 +1027,10 @@ class YearRow(
         }
         }
 
+        if (surplus > 0.0) {
+            fundSavings(surplus)
+        }
+
         val finalStockSold = if (this.isRoiNegative) {
             max(0.0, taxableDistribution - taxableCashPre)
         } else {
@@ -1015,10 +1047,8 @@ class YearRow(
         fedCapGainsBracketLimit = finalResult.fedCapGainsBracketLimit
         fedTaxableOrdinaryIncome = finalResult.taxableOrdinaryIncome
         fedTotalTaxableIncome = finalResult.taxableOrdinaryIncome + finalRealizedGain + taxableDividends
-
-        if (surplus > 0.0) {
-            fundSavings(surplus)
-        }
+        deductibleMedical = finalResult.deductibleMedical
+        totalDeductionsClaimed = finalResult.totalDeductions
         
         calculateEndingBalances(
             iraCashPre, iraNonCashPre,
@@ -1281,11 +1311,13 @@ class YearRow(
         val fedOrdinaryBracketRate: Double = 0.0,
         val fedOrdinaryBracketLimit: Double = 0.0,
         val fedCapGainsBracketRate: Double = 0.0,
-        val fedCapGainsBracketLimit: Double = 0.0
+        val fedCapGainsBracketLimit: Double = 0.0,
+        val totalDeductions: Double = 0.0,
+        val deductibleMedical: Double = 0.0
     )
 
     fun calculateRetirementTax(taxDeferredDist: Double, longTermGains: Double): TaxCalculationResult {
-        val ordinaryIraDist = max(0.0, taxDeferredDist - qcdAmount)
+        val ordinaryIraDist = if (taxDeferredDist < 0.0) taxDeferredDist else max(0.0, taxDeferredDist - qcdAmount)
         val otherIncome = getOtherIncome() + longTermGains + ordinaryIraDist
         val ssBenefits = socSecSelf + socSecSpouse
         val combinedIncome = (0.5 * ssBenefits) + otherIncome
@@ -1309,7 +1341,14 @@ class YearRow(
         }
 
         val grossOrdinaryIncome = getOrdinaryIncome() + ordinaryIraDist + taxableSS
-        val totalDeductions = if (dafContribution > 0.0) dafContribution else standardDeduction
+        val totalGainsAndQualified = longTermGains + taxableDividends
+        
+        val agi = grossOrdinaryIncome + totalGainsAndQualified
+        val medicalThreshold = agi * 0.075
+        val deductibleMedical = max(0.0, elderCare - medicalThreshold)
+
+        val itemizedDeductions = dafContribution + deductibleMedical
+        val totalDeductions = max(standardDeduction, itemizedDeductions)
         val taxableOrdinaryIncome = max(0.0, grossOrdinaryIncome - totalDeductions)
 
         var ordTax = 0.0
@@ -1325,7 +1364,6 @@ class YearRow(
             }
         }
 
-        val totalGainsAndQualified = longTermGains + taxableDividends
         val totalTaxableIncome = taxableOrdinaryIncome + totalGainsAndQualified
 
         var capGainsTax = 0.0
@@ -1347,7 +1385,8 @@ class YearRow(
         }
         capGainsTax = totalTax - baseTax
 
-        val stateDeduction = if (dafContribution > 0.0) dafContribution else (if (isSingle) formData.getDouble("state_std_deduction", 22500.0) / 2.0 else formData.getDouble("state_std_deduction", 22500.0)) * inflationAdjustmentFactor
+        val stateStandard = (if (isSingle) formData.getDouble("state_std_deduction", 22500.0) / 2.0 else formData.getDouble("state_std_deduction", 22500.0)) * inflationAdjustmentFactor
+        val stateDeduction = max(stateStandard, itemizedDeductions)
         val stateIncome = max(0.0, grossOrdinaryIncome - stateDeduction)
         stateTaxes = stateIncome * formData.getDouble("state_tax_rate", 4.5) / 100.0
         ordinaryTax = ordTax
@@ -1389,7 +1428,9 @@ class YearRow(
             fedOrdinaryBracketRate = ordRate,
             fedOrdinaryBracketLimit = ordLimit,
             fedCapGainsBracketRate = cgRate,
-            fedCapGainsBracketLimit = cgLimit
+            fedCapGainsBracketLimit = cgLimit,
+            totalDeductions = totalDeductions,
+            deductibleMedical = deductibleMedical
         )
     }
 
@@ -1465,7 +1506,7 @@ class YearRow(
         }
         var annual = monthly * fractionOfYearAfter(startDate) * 12.0
         if (annual > 0.0) {
-            annual *= inflationAdjustmentFactor
+            annual *= ssInflationAdjustmentFactor
         }
         return annual
     }
@@ -1613,7 +1654,7 @@ class YearRow(
             val creditMonths = min(ageDiff, 36)
             monthly = pia * (1.0 + (creditMonths * 2.0 / 3.0) / 100.0)
         }
-        return monthly * 12.0 * inflationAdjustmentFactor
+        return monthly * 12.0 * ssInflationAdjustmentFactor
     }
 
     private fun calcPotentialPension(isSelf: Boolean): Double {
@@ -1765,6 +1806,8 @@ class YearRow(
         result["fedTaxableOrdinaryIncome"] = fedTaxableOrdinaryIncome
         result["fedTotalTaxableIncome"] = fedTotalTaxableIncome
         result["standard_deduction"] = standardDeduction
+        result["deductible_medical"] = deductibleMedical
+        result["total_deductions"] = totalDeductionsClaimed
         result["fed_taxable_ss"] = fedTaxableSocialSecurity
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
@@ -1778,13 +1821,14 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
     
     fun simulate(): List<List<YearRow>> {
         val firstRow = YearRow(baseFormData, null)
-        val lifetime = baseFormData.getInt("lifetime", 100)
+        val lifetimeSelf = baseFormData.getInt("lifetime", 100)
+        val lifetimeSpouse = baseFormData.getInt("lifetime_spouse", 100)
         val numSimulations = baseFormData.getInt("num_simulations", 100)
         val investmentStdDev = baseFormData.getDouble("investment_std_dev", 15.0) / 100.0
         val inflationStdDev = baseFormData.getDouble("inflation_std_dev", 1.25) / 100.0
 
         val startAge = min(firstRow.ageSelf, firstRow.ageSpouse)
-        val maxForecastAge = max(lifetime + 40, 100)
+        val maxForecastAge = max(max(lifetimeSelf, lifetimeSpouse) + 40, 100)
         val forecastYears = maxForecastAge - startAge + 5
 
         val roiPct = baseFormData.getDouble("investment_return", 6.0) / 100.0
@@ -1800,8 +1844,8 @@ class MonteCarlo(val baseFormData: Map<String, String>) {
         for (runIdx in 0 until numSimulations) {
             val runYears = mutableListOf<YearRow>()
             var curYear: YearRow? = null
-            val dSelf = max(minDeathSelf, lifetime.toDouble() + 8.0 * generateStandardNormalRandom())
-            val dSpouse = max(minDeathSpouse, lifetime.toDouble() + 8.0 * generateStandardNormalRandom())
+            val dSelf = max(minDeathSelf, lifetimeSelf.toDouble() + 8.0 * generateStandardNormalRandom())
+            val dSpouse = max(minDeathSpouse, lifetimeSpouse.toDouble() + 8.0 * generateStandardNormalRandom())
             var i = 0
             while (true) {
                 if (curYear != null && 
