@@ -694,6 +694,52 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         val p = JPanel(BorderLayout())
         resultTable.autoResizeMode = JTable.AUTO_RESIZE_OFF
         
+        // Add custom copy action to handle column headers and strip HTML (which avoids default TransferHandler crashes on RMD years)
+        resultTable.actionMap.put("copy", object : javax.swing.AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) {
+                val selectedRows = resultTable.selectedRows
+                val selectedCols = resultTable.selectedColumns
+                if (selectedRows.isEmpty() || selectedCols.isEmpty()) return
+                
+                val sb = StringBuilder()
+                // Column headers
+                for (j in selectedCols.indices) {
+                    val colIdx = selectedCols[j]
+                    val colName = resultTable.getColumnName(colIdx)
+                    sb.append(colName.replace(Regex("<[^>]*>"), ""))
+                    if (j < selectedCols.size - 1) {
+                        sb.append("\t")
+                    }
+                }
+                sb.append("\n")
+                
+                // Rows
+                for (i in selectedRows.indices) {
+                    val rowIdx = selectedRows[i]
+                    for (j in selectedCols.indices) {
+                        val colIdx = selectedCols[j]
+                        val value = resultTable.getValueAt(rowIdx, colIdx)
+                        val strVal = value?.toString() ?: ""
+                        val cleanVal = strVal.replace(Regex("<[^>]*>"), "").replace("&nbsp;", " ")
+                        sb.append(cleanVal)
+                        if (j < selectedCols.size - 1) {
+                            sb.append("\t")
+                        }
+                    }
+                    if (i < selectedRows.size - 1) {
+                        sb.append("\n")
+                    }
+                }
+                
+                try {
+                    val selection = java.awt.datatransfer.StringSelection(sb.toString())
+                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+                } catch (ex: Exception) {
+                    // Fail silently
+                }
+            }
+        })
+
         // Add popup menu for copying stock lots
         val popupMenu = JPopupMenu()
         val copyLotsItem = JMenuItem("Copy Stock Lots for selected year")
