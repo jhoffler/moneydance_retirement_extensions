@@ -22,6 +22,15 @@ data class StockLot(
         get() = if (currentVal > 0.0) costBasis / currentVal else 0.0
 }
 
+private data class ConversionResult(
+    val valid: Boolean,
+    val limitReason: String,
+    val newTax: Double = 0.0,
+    val newRealizedGain: Double = 0.0,
+    val newRealizedLoss: Double = 0.0,
+    val newTaxableDistribution: Double = 0.0
+)
+
 val TAX_RATES_FED = listOf(
     TaxBracket(0.10, 24800.0),
     TaxBracket(0.12, 100800.0),
@@ -179,6 +188,7 @@ class YearRow(
     var dafDistribution: Double = 0.0
     var dafContribution: Double = 0.0
     var rothConversion: Double = 0.0
+    var rothLimitReason: String = ""
     var qcdAmount: Double = 0.0
     var realizedGain: Double = 0.0
     var isRoiNegative: Boolean = false
@@ -772,11 +782,10 @@ class YearRow(
             val isRoiNegative = investReturnPct < 0.0 || cumulativeRoi < 0.0
 
             val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
-            val bracketCeiling = CAP_GAINS_RATES_FED[0].maxIncome * inflationAdjustmentFactor
             
             var taxableDistributionVal = 0.0
             var iraDistributionVal = 0.0
-            var rothConversionVal = 0.0
+            val rothConversionVal = 0.0
             var totalTax = 0.0
             var netCash = 0.0
             var currentDeduction = standardDeduction
@@ -789,16 +798,7 @@ class YearRow(
                     iraDistributionVal = 0.0
                     
                     val netCapitalGains = 0.0
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary - currentDeduction)
-                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
-                    rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
-                    val maxConvert = max(0.0, maxIra)
-                    rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (isRoiNegative) {
-                        rothConversionVal = 0.0
-                    }
-                    
-                    val result = calculateRetirementTax(rothConversionVal, netCapitalGains)
+                    val result = calculateRetirementTax(0.0, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = fixedCash - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
@@ -817,16 +817,7 @@ class YearRow(
                     }
                     
                     val netCapitalGains = simulateStockSale(taxableDistributionVal)
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - currentDeduction)
-                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
-                    rothConversionVal = unusedDeduction + max(0.0, conversionRoom)
-                    val maxConvert = max(0.0, maxIra - iraDistributionVal)
-                    rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (isRoiNegative) {
-                        rothConversionVal = 0.0
-                    }
-                    
-                    val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
+                    val result = calculateRetirementTax(iraDistributionVal, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
@@ -839,16 +830,7 @@ class YearRow(
                     iraDistributionVal = taxFreeIraWithdrawal + taxableIraWithdrawal
                     
                     val netCapitalGains = simulateStockSale(taxableDistributionVal)
-                    val currentTaxableOrdinaryBeforeConversion = max(0.0, guaranteedOrdinary + iraDistributionVal - currentDeduction)
-                    val conversionRoom = bracketCeiling - (currentTaxableOrdinaryBeforeConversion + taxableDividends + netCapitalGains)
-                    rothConversionVal = max(0.0, conversionRoom)
-                    val maxConvert = max(0.0, maxIra - iraDistributionVal)
-                    rothConversionVal = min(maxConvert, rothConversionVal)
-                    if (isRoiNegative) {
-                        rothConversionVal = 0.0
-                    }
-                    
-                    val result = calculateRetirementTax(iraDistributionVal + rothConversionVal, netCapitalGains)
+                    val result = calculateRetirementTax(iraDistributionVal, netCapitalGains)
                     totalTax = result.totalFederalTax + result.totalStateTax + propertyTaxes + payrollTaxes
                     netCash = (iraDistributionVal + taxableDistributionVal + fixedCash) - totalTax
                     surplus = max(0.0, netCash - targetNetCash)
@@ -865,11 +847,11 @@ class YearRow(
                 rothDistribution = 0.0
             }
             
-            currentIRA = iraDistributionVal + rothConversionVal
+            currentIRA = iraDistributionVal
             currentBrokerageSale = taxableDistributionVal
-            rothConversion = rothConversionVal
-            iraDistribution = iraDistributionVal + rothConversionVal
-            rothDistribution = rothDistribution - rothConversionVal
+            rothConversion = 0.0
+            iraDistribution = iraDistributionVal
+            rothDistribution = rothDistribution
             taxableDistribution = taxableDistributionVal
         } else {
             currentBrokerageSale = max(0.0, estimatedGrossNeeded - rmdValue - fixedCash)
@@ -1050,6 +1032,189 @@ class YearRow(
         deductibleMedical = finalResult.deductibleMedical
         totalDeductionsClaimed = finalResult.totalDeductions
         
+        // ----------------- ROTH CONVERSIONS -----------------
+        val rothEnabled = formData.getBoolean("roth_enabled", false)
+        if (rothEnabled) {
+            val rothStartAge = formData.getDouble("roth_start_age", 60.0)
+            val rothEndAge = formData.getDouble("roth_end_age", 75.0)
+            val oldestAge = max(ageSelf.toDouble(), ageSpouse.toDouble())
+            
+            if (oldestAge in rothStartAge..rothEndAge) {
+                val maxConvert = max(0.0, iraSavings - max(0.0, iraDistribution))
+                if (maxConvert <= 0.01) {
+                    rothLimitReason = "No IRA Balance"
+                } else {
+                    val baseTaxes = finalResult.totalFederalTax + finalResult.totalStateTax
+                    
+                    var low = 0.0
+                    var high = maxConvert
+                    var bestC = 0.0
+                    
+                    fun evaluateCandidate(C: Double): ConversionResult {
+                        var currentTaxIncrease = 0.0
+                        var netRealizedGain = finalRealizedGain
+                        var realizedLoss = 0.0
+                        var finalTaxableDist = taxableDistribution
+                        var result: TaxCalculationResult? = null
+                        
+                        for (iter in 0 until 5) {
+                            val candidateTaxableDist = taxableDistribution + currentTaxIncrease
+                            val sortedLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }
+                                .filter { it.currentVal > 0.0 }
+                                .sortedByDescending { it.basisRatio }
+                                
+                            var remaining = candidateTaxableDist
+                            var totalRealizedGain = 0.0
+                            var totalRealizedLoss = 0.0
+                            
+                            val lossLimitStr = formData["roth_max_realized_loss"] ?: ""
+                            var remainingLossLimit = lossLimitStr.toDoubleOrNull() ?: Double.MAX_VALUE
+                            
+                            for (lot in sortedLots) {
+                                if (remaining <= 0.0) break
+                                
+                                if (lot.basisRatio > 1.0) {
+                                    if (remainingLossLimit <= 0.001) {
+                                        continue
+                                    }
+                                    val soldFromLot = min(lot.currentVal, remaining)
+                                    val loss = soldFromLot * (lot.basisRatio - 1.0)
+                                    if (loss <= remainingLossLimit + 0.001) {
+                                        totalRealizedLoss += loss
+                                        remaining -= soldFromLot
+                                        remainingLossLimit -= loss
+                                    } else {
+                                        val portion = remainingLossLimit / (lot.basisRatio - 1.0)
+                                        val portionSold = min(soldFromLot, portion)
+                                        val portionLoss = portionSold * (lot.basisRatio - 1.0)
+                                        totalRealizedLoss += portionLoss
+                                        remaining -= portionSold
+                                        remainingLossLimit = 0.0
+                                    }
+                                } else {
+                                    val soldFromLot = min(lot.currentVal, remaining)
+                                    val gain = soldFromLot * (1.0 - lot.basisRatio)
+                                    totalRealizedGain += gain
+                                    remaining -= soldFromLot
+                                }
+                            }
+                            if (remaining > 0.0) {
+                                totalRealizedGain += remaining
+                            }
+                            
+                            netRealizedGain = totalRealizedGain - totalRealizedLoss
+                            realizedLoss = totalRealizedLoss
+                            finalTaxableDist = candidateTaxableDist
+                            
+                            result = calculateRetirementTax(iraDistribution + C, netRealizedGain)
+                            val newTotalTax = result.totalFederalTax + result.totalStateTax
+                            currentTaxIncrease = max(0.0, newTotalTax - baseTaxes)
+                        }
+                        
+                        if (result == null) return ConversionResult(false, "Error")
+                        
+                        val maxOrdinaryBracket = formData["roth_max_ordinary_bracket"] ?: "12%"
+                        if (maxOrdinaryBracket != "None") {
+                            val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
+                            val scaleBracket = if (isSingle) 0.5 else 1.0
+                            
+                            val ceiling = when (maxOrdinaryBracket) {
+                                "Std Ded" -> result.totalDeductions
+                                "10%" -> TAX_RATES_FED[0].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "12%" -> TAX_RATES_FED[1].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "22%" -> TAX_RATES_FED[2].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "24%" -> TAX_RATES_FED[3].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "32%" -> TAX_RATES_FED[4].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "35%" -> TAX_RATES_FED[5].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "37%" -> TAX_RATES_FED[6].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                else -> Double.MAX_VALUE
+                            }
+                            if (result.taxableOrdinaryIncome > ceiling + 0.01) {
+                                return ConversionResult(false, "Bracket Ceiling", result.totalFederalTax + result.totalStateTax, netRealizedGain, realizedLoss, finalTaxableDist)
+                            }
+                        }
+                        
+                        val maxCgRateStr = formData["roth_max_cg_rate"] ?: "0%"
+                        val maxCgRate = when (maxCgRateStr) {
+                            "0%" -> 0.0
+                            "15%" -> 0.15
+                            "20%" -> 0.20
+                            else -> 0.20
+                        }
+                        if (result.fedCapGainsBracketRate > maxCgRate + 0.001) {
+                            return ConversionResult(false, "CG Rate Limit", result.totalFederalTax + result.totalStateTax, netRealizedGain, realizedLoss, finalTaxableDist)
+                        }
+                        
+                        val taxCapStr = formData["roth_tax_impact_cap"] ?: ""
+                        if (taxCapStr.isNotEmpty()) {
+                            val taxCapVal = taxCapStr.toDoubleOrNull()
+                            if (taxCapVal != null) {
+                                val adjustedCap = taxCapVal * inflationAdjustmentFactor
+                                if (currentTaxIncrease > adjustedCap + 0.01) {
+                                    return ConversionResult(false, "Tax Cap Limit", result.totalFederalTax + result.totalStateTax, netRealizedGain, realizedLoss, finalTaxableDist)
+                                }
+                            }
+                        }
+                        
+                        val lossLimitStr = formData["roth_max_realized_loss"] ?: ""
+                        if (lossLimitStr.isNotEmpty()) {
+                            val lossLimitVal = lossLimitStr.toDoubleOrNull()
+                            if (lossLimitVal != null) {
+                                if (realizedLoss > lossLimitVal + 0.01) {
+                                    return ConversionResult(false, "Stock Loss Limit", result.totalFederalTax + result.totalStateTax, netRealizedGain, realizedLoss, finalTaxableDist)
+                                }
+                            }
+                        }
+                        
+                        return ConversionResult(true, "IRA Balance", result.totalFederalTax + result.totalStateTax, netRealizedGain, realizedLoss, finalTaxableDist)
+                    }
+                    
+                    var bestResult = evaluateCandidate(0.0)
+                    if (bestResult.valid) {
+                        for (i in 0 until 15) {
+                            val mid = (low + high) / 2.0
+                            val res = evaluateCandidate(mid)
+                            if (res.valid) {
+                                bestC = mid
+                                bestResult = res
+                                low = mid
+                            } else {
+                                high = mid
+                            }
+                        }
+                        if (bestC < maxConvert - 15.0) {
+                            val failRes = evaluateCandidate(bestC + 10.0)
+                            bestResult = bestResult.copy(limitReason = failRes.limitReason)
+                        }
+                    }
+                    
+                    if (bestC > 0.01) {
+                        rothConversion = bestC
+                        iraDistribution += bestC
+                        rothDistribution -= bestC
+                        taxableDistribution = bestResult.newTaxableDistribution
+                        realizedGain = bestResult.newRealizedGain
+                        
+                        val finalConvResult = calculateRetirementTax(iraDistribution, realizedGain)
+                        fedTaxableSocialSecurity = finalConvResult.taxableSocialSecurity
+                        fedOrdinaryBracketRate = finalConvResult.fedOrdinaryBracketRate
+                        fedOrdinaryBracketLimit = finalConvResult.fedOrdinaryBracketLimit
+                        fedCapGainsBracketRate = finalConvResult.fedCapGainsBracketRate
+                        fedCapGainsBracketLimit = finalConvResult.fedCapGainsBracketLimit
+                        fedTaxableOrdinaryIncome = finalConvResult.taxableOrdinaryIncome
+                        fedTotalTaxableIncome = finalConvResult.taxableOrdinaryIncome + realizedGain + taxableDividends
+                        deductibleMedical = finalConvResult.deductibleMedical
+                        totalDeductionsClaimed = finalConvResult.totalDeductions
+                    }
+                    rothLimitReason = bestResult.limitReason
+                }
+            } else {
+                rothLimitReason = "Outside Age Window"
+            }
+        } else {
+            rothLimitReason = ""
+        }
+        
         calculateEndingBalances(
             iraCashPre, iraNonCashPre,
             rothCashPre, rothNonCashPre,
@@ -1064,17 +1229,39 @@ class YearRow(
             .filter { it.currentVal > 0.0 }
             .sortedByDescending { it.basisRatio }
             
+        val lossLimitStr = formData["roth_max_realized_loss"] ?: ""
+        var remainingLossLimit = lossLimitStr.toDoubleOrNull() ?: Double.MAX_VALUE
+        
         var remaining = amountToSell
         var totalRealizedGain = 0.0
         
         for (lot in sortedLots) {
             if (remaining <= 0.0) break
-            val soldFromLot = min(lot.currentVal, remaining)
-            val basisRatio = lot.basisRatio
-            val realizedBasis = soldFromLot * basisRatio
-            val gain = soldFromLot - realizedBasis
-            totalRealizedGain += gain
-            remaining -= soldFromLot
+            
+            if (lot.basisRatio > 1.0) {
+                if (remainingLossLimit <= 0.001) {
+                    continue
+                }
+                val soldFromLot = min(lot.currentVal, remaining)
+                val loss = soldFromLot * (lot.basisRatio - 1.0)
+                if (loss <= remainingLossLimit + 0.001) {
+                    totalRealizedGain -= loss
+                    remaining -= soldFromLot
+                    remainingLossLimit -= loss
+                } else {
+                    val portion = remainingLossLimit / (lot.basisRatio - 1.0)
+                    val portionSold = min(soldFromLot, portion)
+                    val portionLoss = portionSold * (lot.basisRatio - 1.0)
+                    totalRealizedGain -= portionLoss
+                    remaining -= portionSold
+                    remainingLossLimit = 0.0
+                }
+            } else {
+                val soldFromLot = min(lot.currentVal, remaining)
+                val gain = soldFromLot * (1.0 - lot.basisRatio)
+                totalRealizedGain += gain
+                remaining -= soldFromLot
+            }
         }
         if (remaining > 0.0) {
             totalRealizedGain += remaining
@@ -1192,6 +1379,8 @@ class YearRow(
         taxableSavingsEnd = taxC + taxN
         
         val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
+        val lossLimitStr = formData["roth_max_realized_loss"] ?: ""
+        var remainingLossLimit = lossLimitStr.toDoubleOrNull() ?: Double.MAX_VALUE
         
         val rebalBuy = taxableCash - taxCS
         val rebalBuyWithRoi = rebalBuy * (1.0 + investReturnPct)
@@ -1235,16 +1424,45 @@ class YearRow(
             var remainingSale = rebalSellWithRoi
             for (lot in activeLots) {
                 if (remainingSale <= 0.0) break
-                val toDeplete = min(lot.currentVal, remainingSale)
-                val realizedBasis = toDeplete * lot.basisRatio
-                val gain = toDeplete - realizedBasis
                 
                 val scale = 1.0 + investReturnPct
-                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete / scale)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis / scale)}, realized gain: \$${String.format("%,.2f", gain / scale)}) to manage cash.")
-                
-                lot.costBasis -= realizedBasis
-                lot.currentVal -= toDeplete
-                remainingSale -= toDeplete
+                if (lot.basisRatio > 1.0) {
+                    if (remainingLossLimit <= 0.001) {
+                        continue
+                    }
+                    val toDeplete = min(lot.currentVal, remainingSale)
+                    val loss = toDeplete * (lot.basisRatio - 1.0)
+                    if (loss <= remainingLossLimit + 0.001) {
+                        val realizedBasis = toDeplete * lot.basisRatio
+                        actionLogs.add("Sell \$${String.format("%,.2f", toDeplete / scale)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis / scale)}, realized gain: -\$${String.format("%,.2f", loss / scale)}) to manage cash.")
+                        
+                        lot.costBasis -= realizedBasis
+                        lot.currentVal -= toDeplete
+                        remainingSale -= toDeplete
+                        remainingLossLimit -= loss
+                    } else {
+                        val portion = remainingLossLimit / (lot.basisRatio - 1.0)
+                        val portionSold = min(toDeplete, portion)
+                        val portionRealizedBasis = portionSold * lot.basisRatio
+                        val portionLoss = portionRealizedBasis - portionSold
+                        
+                        actionLogs.add("Sell \$${String.format("%,.2f", portionSold / scale)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", portionRealizedBasis / scale)}, realized gain: -\$${String.format("%,.2f", portionLoss / scale)}) to manage cash.")
+                        
+                        lot.costBasis -= portionRealizedBasis
+                        lot.currentVal -= portionSold
+                        remainingSale -= portionSold
+                        remainingLossLimit = 0.0
+                    }
+                } else {
+                    val toDeplete = min(lot.currentVal, remainingSale)
+                    val realizedBasis = toDeplete * lot.basisRatio
+                    val gain = toDeplete - realizedBasis
+                    actionLogs.add("Sell \$${String.format("%,.2f", toDeplete / scale)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis / scale)}, realized gain: \$${String.format("%,.2f", gain / scale)}) to manage cash.")
+                    
+                    lot.costBasis -= realizedBasis
+                    lot.currentVal -= toDeplete
+                    remainingSale -= toDeplete
+                }
             }
         }
         
@@ -1274,15 +1492,44 @@ class YearRow(
             var remainingSale = netStockWithdrawn
             for (lot in activeLots) {
                 if (remainingSale <= 0.0) break
-                val toDeplete = min(lot.currentVal, remainingSale)
-                val realizedBasis = toDeplete * lot.basisRatio
-                val gain = toDeplete - realizedBasis
                 
-                actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: \$${String.format("%,.2f", gain)}) to cover spending.")
-                
-                lot.costBasis -= realizedBasis
-                lot.currentVal -= toDeplete
-                remainingSale -= toDeplete
+                if (lot.basisRatio > 1.0) {
+                    if (remainingLossLimit <= 0.001) {
+                        continue
+                    }
+                    val toDeplete = min(lot.currentVal, remainingSale)
+                    val loss = toDeplete * (lot.basisRatio - 1.0)
+                    if (loss <= remainingLossLimit + 0.001) {
+                        val realizedBasis = toDeplete * lot.basisRatio
+                        actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: -\$${String.format("%,.2f", loss)}) to cover spending.")
+                        
+                        lot.costBasis -= realizedBasis
+                        lot.currentVal -= toDeplete
+                        remainingSale -= toDeplete
+                        remainingLossLimit -= loss
+                    } else {
+                        val portion = remainingLossLimit / (lot.basisRatio - 1.0)
+                        val portionSold = min(toDeplete, portion)
+                        val portionRealizedBasis = portionSold * lot.basisRatio
+                        val portionLoss = portionRealizedBasis - portionSold
+                        
+                        actionLogs.add("Sell \$${String.format("%,.2f", portionSold)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", portionRealizedBasis)}, realized gain: -\$${String.format("%,.2f", portionLoss)}) to cover spending.")
+                        
+                        lot.costBasis -= portionRealizedBasis
+                        lot.currentVal -= portionSold
+                        remainingSale -= portionSold
+                        remainingLossLimit = 0.0
+                    }
+                } else {
+                    val toDeplete = min(lot.currentVal, remainingSale)
+                    val realizedBasis = toDeplete * lot.basisRatio
+                    val gain = toDeplete - realizedBasis
+                    actionLogs.add("Sell \$${String.format("%,.2f", toDeplete)} of ${lot.name} stock (cost basis: \$${String.format("%,.2f", realizedBasis)}, realized gain: \$${String.format("%,.2f", gain)}) to cover spending.")
+                    
+                    lot.costBasis -= realizedBasis
+                    lot.currentVal -= toDeplete
+                    remainingSale -= toDeplete
+                }
             }
         }
         
@@ -1788,6 +2035,7 @@ class YearRow(
         result["other_distro"] = taxableDistribution
         result["realized_gain"] = realizedGain
         result["roth_conversion"] = rothConversion
+        result["roth_limit_reason"] = rothLimitReason
         result["taxable_dividends"] = taxableDividends
         result["taxable_interest"] = taxableInterest
         result["daf_distro"] = dafDistribution

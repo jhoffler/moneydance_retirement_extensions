@@ -35,6 +35,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private val checkboxes = mutableMapOf<String, JCheckBox>()
     private val lockCheckboxes = mutableMapOf<String, JCheckBox>()
     private val dateFields = mutableMapOf<String, com.moneydance.awt.JDateField>()
+    private val comboBoxes = mutableMapOf<String, JComboBox<String>>()
     
     // UI elements
     private val tableModel = DefaultTableModel()
@@ -106,7 +107,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "show_distros" to "false",
         "show_inflation_roi" to "false",
         "guardrail_percent" to "100",
-        "num_simulations" to "100"
+        "num_simulations" to "100",
+        "roth_enabled" to "false",
+        "roth_start_age" to "60",
+        "roth_end_age" to "75",
+        "roth_max_ordinary_bracket" to "12%",
+        "roth_max_cg_rate" to "0%",
+        "roth_tax_impact_cap" to "",
+        "roth_max_realized_loss" to ""
     )
 
     init {
@@ -120,6 +128,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         
         // Try to restore configuration from Moneydance localStorage
         restoreConfigFromLocalStorage()
+        updateDefaultRothEndAge()
         
         // Read account balances from MoneyDance if possible
         loadMoneyDanceBalances()
@@ -428,6 +437,44 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         p.add(tf, gbc)
     }
 
+    private fun addGridBagComboBoxRow(p: JPanel, labelText: String, key: String, options: Array<String>, row: Int) {
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+        gbc.gridy = row
+
+        // Label
+        gbc.gridx = 0
+        gbc.weightx = 0.85
+        p.add(JLabel(labelText), gbc)
+
+        // Combo Box
+        gbc.gridx = 1
+        gbc.weightx = 0.15
+        val combo = JComboBox(options)
+        comboBoxes[key] = combo
+        p.add(combo, gbc)
+    }
+
+    private fun addGridBagCheckRow(p: JPanel, labelText: String, key: String, row: Int) {
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+        gbc.gridy = row
+
+        // Label/Check
+        gbc.gridx = 0
+        gbc.weightx = 0.85
+        val cb = JCheckBox(labelText)
+        checkboxes[key] = cb
+        p.add(cb, gbc)
+
+        // Place holder for column 2
+        gbc.gridx = 1
+        gbc.weightx = 0.15
+        p.add(Box.createGlue(), gbc)
+    }
+
     private fun addGridBagDateRow(p: JPanel, labelText: String, key: String, row: Int, df: com.moneydance.awt.JDateField) {
         val gbc = GridBagConstraints()
         gbc.fill = GridBagConstraints.HORIZONTAL
@@ -550,6 +597,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private fun createSavingsPanel(): JScrollPane {
         textFields["start_taxable_lots"] = JTextField()
         val p = createGridBagPanel()
+        p.border = TitledBorder("Balances")
         addGridBagFieldRow(p, "IRA Savings:", "start_ira_savings", 0)
         addGridBagFieldRow(p, "  IRA Cash Portion:", "start_ira_cash", 1)
         addGridBagFieldRow(p, "Roth Savings:", "start_roth_savings", 2)
@@ -559,9 +607,28 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         addGridBagFieldRow(p, "Taxable Cost Basis:", "start_taxable_cost_basis", 6)
         addGridBagFieldRow(p, "DAF Savings:", "start_daf_savings", 7)
         
-        val container = JPanel(BorderLayout())
-        container.add(p, BorderLayout.NORTH)
-        return JScrollPane(container)
+        val rothPanel = createGridBagPanel()
+        rothPanel.border = TitledBorder("Roth Conversions")
+        addGridBagCheckRow(rothPanel, "Enable Roth Conversions", "roth_enabled", 0)
+        addGridBagFieldRow(rothPanel, "Start Age:", "roth_start_age", 1)
+        addGridBagFieldRow(rothPanel, "End Age:", "roth_end_age", 2)
+        addGridBagComboBoxRow(rothPanel, "Max Ordinary Bracket to Fill:", "roth_max_ordinary_bracket", arrayOf("None", "Std Ded", "10%", "12%", "22%", "24%", "32%", "35%", "37%"), 3)
+        addGridBagComboBoxRow(rothPanel, "Max Cap Gains Rate to Trigger:", "roth_max_cg_rate", arrayOf("0%", "15%", "20%"), 4)
+        addGridBagFieldRow(rothPanel, "Max Annual Tax Impact Cap ($):", "roth_tax_impact_cap", 5)
+        addGridBagFieldRow(rothPanel, "Max Realized Loss Limit ($):", "roth_max_realized_loss", 6)
+
+        val container = JPanel()
+        container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
+        container.border = EmptyBorder(10, 10, 10, 10)
+        p.alignmentX = Component.LEFT_ALIGNMENT
+        rothPanel.alignmentX = Component.LEFT_ALIGNMENT
+        container.add(p)
+        container.add(Box.createVerticalStrut(10))
+        container.add(rothPanel)
+
+        val wrapper = JPanel(BorderLayout())
+        wrapper.add(container, BorderLayout.NORTH)
+        return JScrollPane(wrapper)
     }
 
     private fun createSettingsPanel(): JScrollPane {
@@ -721,6 +788,11 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 tf.text = formatValueForField(k, v)
                 continue
             }
+            val combo = comboBoxes[k]
+            if (combo != null) {
+                combo.selectedItem = v
+                continue
+            }
             val cb = checkboxes[k]
             if (cb != null) {
                 cb.isSelected = v.toBoolean()
@@ -771,6 +843,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         for ((k, cb) in checkboxes) {
             map[k] = cb.isSelected.toString()
+        }
+        for ((k, combo) in comboBoxes) {
+            map[k] = combo.selectedItem?.toString() ?: ""
         }
         for ((k, df) in dateFields) {
             val dateInt = df.dateInt
@@ -1055,6 +1130,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     // Main recalculate action
     private fun recalc() {
+        updateDefaultRothEndAge()
         lastSimRuns = null
         activeSimIndex = null
         title = "Retirement Calculator"
@@ -1634,6 +1710,26 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
     }
 
+    private fun updateDefaultRothEndAge() {
+        val bdSelf = dateFields["birthdate"]?.dateInt ?: 0
+        val bdSpouse = dateFields["birthdate_spouse"]?.dateInt ?: 0
+        
+        val selfYear = if (bdSelf > 0) bdSelf / 10000 else 1968
+        val spouseYear = if (bdSpouse > 0) bdSpouse / 10000 else 1970
+        val oldestYear = min(selfYear, spouseYear)
+        
+        val defaultRmdAge = when {
+            oldestYear >= 1960 -> 75
+            oldestYear >= 1951 -> 73
+            else -> 72
+        }
+        
+        val currentEndAgeStr = textFields["roth_end_age"]?.text
+        if (currentEndAgeStr.isNullOrEmpty() || currentEndAgeStr == "75" || currentEndAgeStr == "73" || currentEndAgeStr == "72") {
+            textFields["roth_end_age"]?.text = defaultRmdAge.toString()
+        }
+    }
+
 
     // Print helper
     private fun printReport() {
@@ -1708,6 +1804,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             return
         }
         
+        val form = getFormData()
         val sb = StringBuilder()
         val htmlSb = StringBuilder()
         
@@ -2029,6 +2126,18 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             sb.append("  * Combined Taxable Income: **").append(fmt(totInc)).append("**\n")
             sb.append(combIncDerivationMd)
             sb.append("  * Bracket Income Limit: up to **").append(cgLimitStr).append("**\n")
+            val rothConvVal = getD("roth_conversion")
+            val rothLimitReason = r["roth_limit_reason"]?.toString() ?: ""
+            val oldestAge = Math.max(age, ageSp)
+            val rothEnabled = form["roth_enabled"]?.toBoolean() ?: false
+            val rothStartAge = form["roth_start_age"]?.toDoubleOrNull() ?: 60.0
+            val rothEndAge = form["roth_end_age"]?.toDoubleOrNull() ?: 75.0
+            
+            if (rothEnabled && oldestAge >= rothStartAge && oldestAge <= rothEndAge) {
+                sb.append("* **Roth Conversion Details**:\n")
+                sb.append("  * Amount Converted: **").append(fmt(rothConvVal)).append("**\n")
+                sb.append("  * Capped / Limited By: **").append(if (rothLimitReason.isEmpty()) "N/A" else rothLimitReason).append("**\n")
+            }
             sb.append("* **Expenditures**: **").append(fmt(totalExpenditures)).append("**\n")
             sb.append("  * Housing (Mortgage): ").append(fmt(r["housing"])).append("\n")
             sb.append("  * Travel & Eldercare: ").append(fmt(r["travel_eldercare"])).append("\n")
@@ -2057,6 +2166,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             htmlSb.append("</li>\n")
             htmlSb.append("<li>Bracket Income Limit: up to <strong>").append(cgLimitStr).append("</strong></li>\n")
             htmlSb.append("</ul></li>\n")
+            if (rothEnabled && oldestAge >= rothStartAge && oldestAge <= rothEndAge) {
+                htmlSb.append("<li><strong>Roth Conversion Details</strong>:\n")
+                htmlSb.append("<ul style=\"padding-left: 20px;\">")
+                htmlSb.append("<li>Amount Converted: <strong>").append(fmt(rothConvVal)).append("</strong></li>\n")
+                htmlSb.append("<li>Capped / Limited By: <strong>").append(if (rothLimitReason.isEmpty()) "N/A" else rothLimitReason).append("</strong></li>\n")
+                htmlSb.append("</ul></li>\n")
+            }
             htmlSb.append("<li><strong>Expenditures</strong>: <strong>").append(fmt(totalExpenditures)).append("</strong>\n")
             htmlSb.append("<ul style=\"padding-left: 20px;\">")
             htmlSb.append("<li>Housing (Mortgage): ").append(fmt(r["housing"])).append("</li>\n")
