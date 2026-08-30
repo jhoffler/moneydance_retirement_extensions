@@ -22,6 +22,47 @@ data class StockLot(
         get() = if (currentVal > 0.0) costBasis / currentVal else 0.0
 }
 
+data class PensionDefinition(
+    val name: String,
+    var startAge: Double,
+    val benefitSchedule: Map<Double, Double>, // Age -> Monthly Benefit
+    val isLocked: Boolean = false
+) {
+    fun getMonthlyBenefit(age: Double): Double {
+        if (benefitSchedule.isEmpty()) return 0.0
+        if (benefitSchedule.size == 1) return benefitSchedule.values.first()
+        
+        val sortedAges = benefitSchedule.keys.sorted()
+        val lowAge: Double
+        val highAge: Double
+        
+        if (age < sortedAges.first()) {
+            lowAge = sortedAges[0]
+            highAge = sortedAges[1]
+        } else if (age > sortedAges.last()) {
+            lowAge = sortedAges[sortedAges.size - 2]
+            highAge = sortedAges[sortedAges.size - 1]
+        } else {
+            var idx = 0
+            for (i in 0 until sortedAges.size - 1) {
+                if (age >= sortedAges[i] && age <= sortedAges[i+1]) {
+                    idx = i
+                    break
+                }
+            }
+            lowAge = sortedAges[idx]
+            highAge = sortedAges[idx+1]
+        }
+        
+        val lowBenefit = benefitSchedule[lowAge] ?: 0.0
+        val highBenefit = benefitSchedule[highAge] ?: 0.0
+        
+        val fraction = (age - lowAge) / (highAge - lowAge)
+        val benefit = lowBenefit + fraction * (highBenefit - lowBenefit)
+        return kotlin.math.max(0.0, benefit)
+    }
+}
+
 private data class ConversionResult(
     val valid: Boolean,
     val limitReason: String,
@@ -147,10 +188,8 @@ class YearRow(
     val socSecStartDateSelf: LocalDate
     val socSecStartDateSpouse: LocalDate
 
-    val pensionStartAgeSelf: Double
-    val pensionStartAgeSpouse: Double
-    val pensionStartDateSelf: LocalDate
-    val pensionStartDateSpouse: LocalDate
+    val pensionsSelf: List<PensionDefinition>
+    val pensionsSpouse: List<PensionDefinition>
 
     val investReturnPct: Double
     val inflationPct: Double
@@ -273,10 +312,8 @@ class YearRow(
         socSecStartDateSelf = addFractionalYears(birthDateSelf, socSecStartAgeSelf)
         socSecStartDateSpouse = addFractionalYears(birthDateSpouse, socSecStartAgeSpouse)
 
-        pensionStartAgeSelf = formData.getDouble("pension_age", 67.0)
-        pensionStartAgeSpouse = formData.getDouble("pension_age_spouse", 67.0)
-        pensionStartDateSelf = addFractionalYears(birthDateSelf, pensionStartAgeSelf)
-        pensionStartDateSpouse = addFractionalYears(birthDateSpouse, pensionStartAgeSpouse)
+        pensionsSelf = parsePensions(true)
+        pensionsSpouse = parsePensions(false)
 
         val baseInvestReturn = formData.getDouble("investment_return", 6.0) / 100.0
         investReturnPct = if (previousYear == null) {
@@ -465,8 +502,20 @@ class YearRow(
             socSecSpouse = 0.0
         }
 
-        pensionSelf = if (ageSelf <= deathAgeSelf) calcBasePensionIncome(true) else 0.0
-        pensionSpouse = if (ageSpouse <= deathAgeSpouse) calcBasePensionIncome(false) else 0.0
+        pensionSelf = if (ageSelf <= deathAgeSelf) {
+            pensionsSelf.sumOf { p ->
+                val startDate = addFractionalYears(birthDateSelf, p.startAge)
+                val monthly = p.getMonthlyBenefit(p.startAge)
+                monthly * fractionOfYearAfter(startDate) * 12.0
+            }
+        } else 0.0
+        pensionSpouse = if (ageSpouse <= deathAgeSpouse) {
+            pensionsSpouse.sumOf { p ->
+                val startDate = addFractionalYears(birthDateSpouse, p.startAge)
+                val monthly = p.getMonthlyBenefit(p.startAge)
+                monthly * fractionOfYearAfter(startDate) * 12.0
+            }
+        } else 0.0
         val iraInterest = iraCash * INTEREST_RATE
         val rothInterest = rothCash * INTEREST_RATE
         val taxableInterest = taxableCash * INTEREST_RATE
@@ -1695,31 +1744,7 @@ class YearRow(
         return (yearEndTime - testTime).toDouble() / MILLISEC_PER_YEAR
     }
 
-    private fun calcBasePensionIncome(isSelf: Boolean): Double {
-        val startAge: Double
-        val startDate: LocalDate
-        val early: Double
-        val late: Double
-        if (isSelf) {
-            startAge = pensionStartAgeSelf
-            startDate = pensionStartDateSelf
-            early = formData.getDouble("pension_early", 0.0)
-            late = formData.getDouble("pension_late", 0.0)
-        } else {
-            startAge = pensionStartAgeSpouse
-            startDate = pensionStartDateSpouse
-            early = formData.getDouble("pension_early_spouse", 0.0)
-            late = formData.getDouble("pension_late_spouse", 0.0)
-        }
 
-        if (early < 0.0 || late < 0.0) {
-            return calcStatePension(isSelf) * fractionOfYearAfter(startDate)
-        }
-        val maturity = min(startAge - YOUNG_PENSION_AGE, OLD_PENSION_AGE - YOUNG_PENSION_AGE)
-        val increment = (late - early) * maturity / (OLD_PENSION_AGE - YOUNG_PENSION_AGE)
-        val monthly = early + increment
-        return monthly * fractionOfYearAfter(startDate) * 12.0
-    }
 
     private fun calcBaseSocSecIncome(isSelf: Boolean): Double {
         val startAge: Double
@@ -1819,51 +1844,52 @@ class YearRow(
         }
     }
 
-    private fun calcStatePension(isSelf: Boolean): Double {
-        val firstYear = getFirstYear()
-        val startAge = if (isSelf) {
-            getYearsDifference(firstYear.birthDateSelf, firstYear.yearEndDate).toDouble()
-        } else {
-            getYearsDifference(firstYear.birthDateSpouse, firstYear.yearEndDate).toDouble()
-        }
-        val pensionAge = if (isSelf) pensionStartAgeSelf else pensionStartAgeSpouse
-        val retirementAge = if (isSelf) retirementAgeSelf else retirementAgeSpouse
-        val retirementDate = if (isSelf) retirementDateSelf else retirementDateSpouse
-        var salary = if (isSelf) formData.getDouble("salary", 60000.0) else formData.getDouble("salary_spouse", 30000.0)
-
-        val salaries = mutableListOf<Double>()
-        var age = startAge
-        while (age < retirementAge) {
-            salaries.add(salary)
-            salary *= (1.0 + raisePct)
-            age += 1.0
-        }
-
-        var totalEarnings = 0.0
-        val len = min(salaries.size, 4)
-        for (i in 0 until len) {
-            totalEarnings += salaries[salaries.size - 1 - i]
-        }
-        val avgEarnings = if (len > 0) totalEarnings / len else 0.0
-        var pension = avgEarnings * 0.0182
+    private fun parsePensions(isSelf: Boolean): List<PensionDefinition> {
+        val prefix = if (isSelf) "self" else "spouse"
+        val countKey = "pension_count_$prefix"
         
-        val serviceYears = (retirementDate.toDate().time - LocalDate.of(2015, 4, 1).toDate().time).toDouble() / MILLISEC_PER_YEAR
-        pension *= serviceYears
-
-        if (pensionAge < 60.0) {
-            pension = 0.0
-        } else if (pensionAge < 61.0) {
-            pension *= 0.85
-        } else if (pensionAge < 62.0) {
-            pension *= 0.88
-        } else if (pensionAge < 63.0) {
-            pension *= 0.91
-        } else if (pensionAge < 64.0) {
-            pension *= 0.94
-        } else if (pensionAge < 65.0) {
-            pension *= 0.97
+        if (!formData.containsKey(countKey) || formData[countKey].isNullOrEmpty()) {
+            val ageKey = if (isSelf) "pension_age" else "pension_age_spouse"
+            val earlyKey = if (isSelf) "pension_early" else "pension_early_spouse"
+            val lateKey = if (isSelf) "pension_late" else "pension_late_spouse"
+            
+            val age = formData.getDouble(ageKey, -1.0)
+            val early = formData.getDouble(earlyKey, 0.0)
+            val late = formData.getDouble(lateKey, 0.0)
+            
+            if (age >= 0.0 && (early > 0.0 || late > 0.0)) {
+                return listOf(
+                    PensionDefinition(
+                        name = "Default Pension",
+                        startAge = age,
+                        benefitSchedule = mapOf(60.0 to early, 70.0 to late),
+                        isLocked = formData.getBoolean(if (isSelf) "pension_age_locked" else "pension_age_spouse_locked", false)
+                    )
+                )
+            }
+            return emptyList()
         }
-        return pension
+        
+        val count = formData[countKey]?.toIntOrNull() ?: 0
+        val list = mutableListOf<PensionDefinition>()
+        for (i in 0 until count) {
+            val name = formData["pension_name_${prefix}_$i"] ?: "Pension ${i+1}"
+            val startAge = formData.getDouble("pension_start_age_${prefix}_$i", 65.0)
+            val scheduleStr = formData["pension_schedule_${prefix}_$i"] ?: ""
+            val isLocked = formData.getBoolean("pension_locked_${prefix}_$i", false)
+            
+            val schedule = scheduleStr.split(";").mapNotNull { part ->
+                val sub = part.split(":")
+                if (sub.size == 2) {
+                    val a = sub[0].toDoubleOrNull()
+                    val b = sub[1].toDoubleOrNull()
+                    if (a != null && b != null) a to b else null
+                } else null
+            }.toMap()
+            
+            list.add(PensionDefinition(name, startAge, schedule, isLocked))
+        }
+        return list
     }
 
     private fun getFirstYear(): YearRow {
@@ -1905,25 +1931,8 @@ class YearRow(
     }
 
     private fun calcPotentialPension(isSelf: Boolean): Double {
-        val startAge: Double
-        val early: Double
-        val late: Double
-        if (isSelf) {
-            startAge = pensionStartAgeSelf
-            early = formData.getDouble("pension_early", 0.0)
-            late = formData.getDouble("pension_late", 0.0)
-        } else {
-            startAge = pensionStartAgeSpouse
-            early = formData.getDouble("pension_early_spouse", 0.0)
-            late = formData.getDouble("pension_late_spouse", 0.0)
-        }
-        if (early < 0.0 || late < 0.0) {
-            return calcStatePension(isSelf)
-        }
-        val maturity = min(startAge - YOUNG_PENSION_AGE, OLD_PENSION_AGE - YOUNG_PENSION_AGE)
-        val increment = (late - early) * maturity / (OLD_PENSION_AGE - YOUNG_PENSION_AGE)
-        val monthly = early + increment
-        return monthly * 12.0
+        val pensions = if (isSelf) pensionsSelf else pensionsSpouse
+        return pensions.sumOf { it.getMonthlyBenefit(it.startAge) * 12.0 }
     }
 
     fun suggestRmd(): Double {
