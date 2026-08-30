@@ -42,8 +42,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private val tableModel = DefaultTableModel()
     private val resultTable = JTable(tableModel)
     private val mainTabbedPane = JTabbedPane()
-    private val managePensionsButtonSelf = JButton("Manage Pensions (0 defined)")
-    private val managePensionsButtonSpouse = JButton("Manage Pensions (0 defined)")
+    private val managePensionsButtonSelf = JButton("Manage (0)")
+    private val managePensionsButtonSpouse = JButton("Manage (0)")
     
     private val chartPanel = SavingsChartPanel()
     private val simChartPanel = SimulationChartPanel()
@@ -2509,8 +2509,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private fun updatePensionButtonsText() {
         val selfCount = pensionsConfig["pension_count_self"]?.toIntOrNull() ?: 0
         val spouseCount = pensionsConfig["pension_count_spouse"]?.toIntOrNull() ?: 0
-        managePensionsButtonSelf.text = "Manage Pensions ($selfCount defined)"
-        managePensionsButtonSpouse.text = "Manage Pensions ($spouseCount defined)"
+        managePensionsButtonSelf.text = "Manage ($selfCount)"
+        managePensionsButtonSpouse.text = "Manage ($spouseCount)"
     }
 
     private fun getUnlockedPensionStartAgeKeys(isSelf: Boolean): List<String> {
@@ -2716,14 +2716,24 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         addPointBtn.addActionListener {
             schedModel.addRow(arrayOf("65.0", "1200.0"))
         }
-        delPointBtn.addActionListener {
-            val sel = schedTable.selectedRow
-            if (sel >= 0) {
-                schedModel.removeRow(sel)
-            }
+        val pasteBtn = JButton("Paste Schedule")
+        pasteBtn.toolTipText = "Puts schedule data from Excel, Google Sheets, or Markdown from clipboard"
+        pasteBtn.addActionListener {
+            pasteClipboardToScheduleTable(schedTable, schedModel)
         }
         gridBtns.add(addPointBtn)
         gridBtns.add(delPointBtn)
+        gridBtns.add(pasteBtn)
+        tablePanel.add(gridBtns, BorderLayout.SOUTH)
+        
+        schedTable.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.isControlDown && e.keyCode == KeyEvent.VK_V) {
+                    pasteClipboardToScheduleTable(schedTable, schedModel)
+                }
+            }
+        })
+        
         tablePanel.add(gridBtns, BorderLayout.SOUTH)
         
         dialog.add(tablePanel, BorderLayout.CENTER)
@@ -2788,6 +2798,64 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         dialog.setSize(450, 450)
         dialog.setLocationRelativeTo(this)
         dialog.isVisible = true
+    }
+
+    private fun pasteClipboardToScheduleTable(table: JTable, model: DefaultTableModel) {
+        try {
+            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            val contents = clipboard.getContents(null)
+            if (contents != null && contents.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.stringFlavor)) {
+                val text = contents.getTransferData(java.awt.datatransfer.DataFlavor.stringFlavor) as String
+                val parsedRows = parsePastedPoints(text)
+                if (parsedRows.isNotEmpty()) {
+                    model.rowCount = 0
+                    for (row in parsedRows) {
+                        model.addRow(arrayOf(row.first.toString(), row.second.toString()))
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(table, "Could not find any valid numeric data in the clipboard to paste.\nFormat should be rows of: Age Value", "Paste Error", JOptionPane.ERROR_MESSAGE)
+                }
+            }
+        } catch (e: Exception) {
+            JOptionPane.showMessageDialog(table, "Failed to paste data: " + e.message, "Error", JOptionPane.ERROR_MESSAGE)
+        }
+    }
+    
+    private fun parsePastedPoints(text: String): List<Pair<Double, Double>> {
+        val lines = text.split(Regex("[\r\n]+"))
+        val points = mutableListOf<Pair<Double, Double>>()
+        for (line in lines) {
+            val cleanLine = line.trim()
+            if (cleanLine.isEmpty()) continue
+            
+            // Skip markdown header separators like |---|---|
+            if (cleanLine.contains(Regex("^\\|?\\s*:?-+:?\\s*\\|\\s*:?-+:?\\s*\\|?"))) continue
+            
+            // Clean up thousands separators in numbers (e.g. 1,200 -> 1200)
+            val processedLine = cleanLine.replace(Regex("(\\d),(\\d{3})"), "$1$2")
+            
+            // Split by tabs, commas, pipes, or general whitespace
+            val parts = processedLine.split(Regex("[\t,\\|\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
+            
+            var num1: Double? = null
+            var num2: Double? = null
+            for (p in parts) {
+                val cleanPart = p.replace("$", "").replace(",", "").replace("%", "")
+                val d = cleanPart.toDoubleOrNull()
+                if (d != null) {
+                    if (num1 == null) {
+                        num1 = d
+                    } else if (num2 == null) {
+                        num2 = d
+                        break
+                    }
+                }
+            }
+            if (num1 != null && num2 != null) {
+                points.add(Pair(num1, num2))
+            }
+        }
+        return points
     }
 }
 
