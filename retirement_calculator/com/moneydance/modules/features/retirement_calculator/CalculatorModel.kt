@@ -96,7 +96,7 @@ val SS_BRACKETS = listOf(
 
 const val STD_DEDUCTION = 32200.0
 const val OBBBA_DEDUCTION = 12000.0
-const val DIVIDEND_RATE = 0.01
+const val DIVIDEND_RATE = 0.005
 const val INTEREST_RATE = 0.03
 const val MAJOR_GUARDRAIL_VIOLATION = 0.2
 const val YOUNG_PENSION_AGE = 60.0
@@ -196,6 +196,8 @@ class YearRow(
     val raisePct: Double
     val guardrailPct: Double
     val dafExcessPct: Double
+    val interestRate: Double
+    val dividendRate: Double
 
     var iraSavings: Double = 0.0
     var rothSavings: Double = 0.0
@@ -331,6 +333,9 @@ class YearRow(
 
         val excessStr = formData["daf_excess_pct"]
         dafExcessPct = if (excessStr != null && excessStr.isNotEmpty()) excessStr.toDouble() / 100.0 else 0.5
+
+        interestRate = formData.getDouble("interest_rate", 3.0) / 100.0
+        dividendRate = formData.getDouble("dividend_rate", 0.5) / 100.0
 
         if (previousYear == null) {
             iraSavings = formData.getDouble("start_ira_savings", 1000000.0)
@@ -516,15 +521,15 @@ class YearRow(
                 monthly * fractionOfYearAfter(startDate) * 12.0
             }
         } else 0.0
-        val iraInterest = iraCash * INTEREST_RATE
-        val rothInterest = rothCash * INTEREST_RATE
-        val taxableInterest = taxableCash * INTEREST_RATE
+        val iraInterest = iraCash * interestRate
+        val rothInterest = rothCash * interestRate
+        val taxableInterest = taxableCash * interestRate
         interest = iraInterest + rothInterest + taxableInterest
 
         val iraNonCash = max(0.0, iraSavings - iraCash)
         val rothNonCash = max(0.0, rothSavings - rothCash)
         val taxableNonCash = max(0.0, taxableSavings - taxableCash)
-        dividends = (iraNonCash * DIVIDEND_RATE) + (rothNonCash * DIVIDEND_RATE) + (taxableNonCash * DIVIDEND_RATE)
+        dividends = (iraNonCash * dividendRate) + (rothNonCash * dividendRate) + (taxableNonCash * dividendRate)
     }
 
     private fun calculateSpousalTopUp(primaryPia: Double, secondaryPia: Double, secondaryBenefit: Double, birthDate: LocalDate, startDate: LocalDate): Double {
@@ -690,13 +695,13 @@ class YearRow(
         val (rothCS, rothNCS) = getStartCashAndStock(rothSavings, rothCash)
         val (taxCS, taxNCS) = getStartCashAndStock(taxableSavings, taxableCash)
         
-        val iraInterest = iraCS * INTEREST_RATE
-        val rothInterest = rothCS * INTEREST_RATE
-        val taxableInterest = taxCS * INTEREST_RATE
+        val iraInterest = iraCS * interestRate
+        val rothInterest = rothCS * interestRate
+        val taxableInterest = taxCS * interestRate
         
-        val iraDividends = iraNCS * DIVIDEND_RATE
-        val rothDividends = rothNCS * DIVIDEND_RATE
-        val taxableDividends = taxNCS * DIVIDEND_RATE
+        val iraDividends = iraNCS * dividendRate
+        val rothDividends = rothNCS * dividendRate
+        val taxableDividends = taxNCS * dividendRate
         
         interest = iraInterest + rothInterest + taxableInterest
         dividends = iraDividends + rothDividends + taxableDividends
@@ -2044,6 +2049,8 @@ class YearRow(
         result["realized_gain"] = realizedGain
         result["roth_conversion"] = rothConversion
         result["roth_limit_reason"] = rothLimitReason
+        result["interest_rate"] = interestRate
+        result["dividend_rate"] = dividendRate
         result["taxable_dividends"] = taxableDividends
         result["taxable_interest"] = taxableInterest
         result["daf_distro"] = dafDistribution

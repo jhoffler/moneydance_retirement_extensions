@@ -56,6 +56,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         "start_year" to "2026",
         "investment_return" to "6",
         "inflation" to "2.25",
+        "interest_rate" to "3",
+        "dividend_rate" to "0.5",
         "lifetime" to "100",
         "lifetime_spouse" to "100",
         "lifetime_locked" to "false",
@@ -347,6 +349,16 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         tfInflationDev.horizontalAlignment = JTextField.RIGHT
         textFields["inflation_std_dev"] = tfInflationDev
         addRow(6, "Inflation Std Dev %:", tfInflationDev)
+        
+        val tfInterestRate = JTextField()
+        tfInterestRate.horizontalAlignment = JTextField.RIGHT
+        textFields["interest_rate"] = tfInterestRate
+        addRow(7, "Interest Rate %:", tfInterestRate)
+        
+        val tfDividendRate = JTextField()
+        tfDividendRate.horizontalAlignment = JTextField.RIGHT
+        textFields["dividend_rate"] = tfDividendRate
+        addRow(8, "Dividend Rate %:", tfDividendRate)
         
         val container = JPanel(BorderLayout())
         container.add(p, BorderLayout.NORTH)
@@ -2993,12 +3005,14 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                     </html>""".trimIndent()
             }
             isSavingsCol -> {
+                val interestRateVal = (rowData["interest_rate"] as? Number)?.toDouble() ?: 0.03
+                val dividendRateVal = (rowData["dividend_rate"] as? Number)?.toDouble() ?: 0.005
                 val iraBalVal = (rowData["ira_savings"] as? Number)?.toDouble() ?: 0.0
                 val iraCashVal = (rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0
                 val iraNonCashVal = max(0.0, iraBalVal - iraCashVal)
                 val iraRoiVal = (rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0
-                val iraInterest = iraCashVal * INTEREST_RATE
-                val iraDividends = iraNonCashVal * DIVIDEND_RATE
+                val iraInterest = iraCashVal * interestRateVal
+                val iraDividends = iraNonCashVal * dividendRateVal
                 val iraDistVal = (rowData["ira_distro"] as? Number)?.toDouble() ?: 0.0
                 val iraContrib = if (iraDistVal < 0.0) -iraDistVal else 0.0
                 val iraDist = if (iraDistVal > 0.0) iraDistVal else 0.0
@@ -3008,8 +3022,8 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                 val rothCashVal = (rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0
                 val rothNonCashVal = max(0.0, rothBalVal - rothCashVal)
                 val rothRoiVal = (rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0
-                val rothInterest = rothCashVal * INTEREST_RATE
-                val rothDividends = rothNonCashVal * DIVIDEND_RATE
+                val rothInterest = rothCashVal * interestRateVal
+                val rothDividends = rothNonCashVal * dividendRateVal
                 val rothDistVal = (rowData["roth_distro"] as? Number)?.toDouble() ?: 0.0
                 val rothContrib = if (rothDistVal < 0.0) -rothDistVal else 0.0
                 val rothDist = if (rothDistVal > 0.0) rothDistVal else 0.0
@@ -3019,8 +3033,8 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                 val otherCashVal = (rowData["other_cash"] as? Number)?.toDouble() ?: 0.0
                 val otherNonCashVal = max(0.0, otherBalVal - otherCashVal)
                 val otherRoiVal = (rowData["other_roi"] as? Number)?.toDouble() ?: 0.0
-                val otherInterest = otherCashVal * INTEREST_RATE
-                val otherDividends = otherNonCashVal * DIVIDEND_RATE
+                val otherInterest = otherCashVal * interestRateVal
+                val otherDividends = otherNonCashVal * dividendRateVal
                 val otherDistVal = (rowData["other_distro"] as? Number)?.toDouble() ?: 0.0
                 val otherContrib = if (otherDistVal < 0.0) -otherDistVal else 0.0
                 val otherDist = if (otherDistVal > 0.0) otherDistVal else 0.0
@@ -3057,26 +3071,28 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                     </html>""".trimIndent()
             }
             colName == "Div / Int Taxable" -> {
+                val interestRateVal = (rowData["interest_rate"] as? Number)?.toDouble() ?: 0.03
+                val dividendRateVal = (rowData["dividend_rate"] as? Number)?.toDouble() ?: 0.005
                 val iraBalVal = (rowData["ira_savings"] as? Number)?.toDouble() ?: 0.0
                 val iraCashVal = (rowData["ira_cash"] as? Number)?.toDouble() ?: 0.0
                 val iraNonCashVal = max(0.0, iraBalVal - iraCashVal)
                 val iraRoiVal = (rowData["ira_roi"] as? Number)?.toDouble() ?: 0.0
-                val iraInterest = iraCashVal * INTEREST_RATE
-                val iraDividends = iraNonCashVal * DIVIDEND_RATE
+                val iraInterest = iraCashVal * interestRateVal
+                val iraDividends = iraNonCashVal * dividendRateVal
 
                 val rothBalVal = (rowData["roth_savings"] as? Number)?.toDouble() ?: 0.0
                 val rothCashVal = (rowData["roth_cash"] as? Number)?.toDouble() ?: 0.0
                 val rothNonCashVal = max(0.0, rothBalVal - rothCashVal)
                 val rothRoiVal = (rowData["roth_roi"] as? Number)?.toDouble() ?: 0.0
-                val rothInterest = rothCashVal * INTEREST_RATE
-                val rothDividends = rothNonCashVal * DIVIDEND_RATE
+                val rothInterest = rothCashVal * interestRateVal
+                val rothDividends = rothNonCashVal * dividendRateVal
 
                 val otherBalVal = (rowData["other_savings"] as? Number)?.toDouble() ?: 0.0
                 val otherCashVal = (rowData["other_cash"] as? Number)?.toDouble() ?: 0.0
                 val otherNonCashVal = max(0.0, otherBalVal - otherCashVal)
                 val otherRoiVal = (rowData["other_roi"] as? Number)?.toDouble() ?: 0.0
-                val otherInterest = otherCashVal * INTEREST_RATE
-                val otherDividends = otherNonCashVal * DIVIDEND_RATE
+                val otherInterest = otherCashVal * interestRateVal
+                val otherDividends = otherNonCashVal * dividendRateVal
 
                 val dafBalVal = (rowData["daf_savings"] as? Number)?.toDouble() ?: 0.0
                 val dafRoiVal = (rowData["daf_roi"] as? Number)?.toDouble() ?: 0.0
