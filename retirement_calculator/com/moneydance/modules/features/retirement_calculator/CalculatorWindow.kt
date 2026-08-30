@@ -2716,6 +2716,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         addPointBtn.addActionListener {
             schedModel.addRow(arrayOf("65.0", "1200.0"))
         }
+        delPointBtn.addActionListener {
+            val sel = schedTable.selectedRow
+            if (sel >= 0) {
+                schedModel.removeRow(sel)
+            }
+        }
         val pasteBtn = JButton("Paste Schedule")
         pasteBtn.toolTipText = "Puts schedule data from Excel, Google Sheets, or Markdown from clipboard"
         pasteBtn.addActionListener {
