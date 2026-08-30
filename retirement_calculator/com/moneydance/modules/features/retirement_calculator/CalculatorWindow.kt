@@ -703,7 +703,11 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         resultTable.actionMap.put("copy", object : javax.swing.AbstractAction() {
             override fun actionPerformed(e: java.awt.event.ActionEvent) {
                 val selectedRows = resultTable.selectedRows
-                val selectedCols = resultTable.selectedColumns
+                val selectedCols = if (resultTable.columnSelectionAllowed) {
+                    resultTable.selectedColumns
+                } else {
+                    IntArray(resultTable.columnCount) { it }
+                }
                 if (selectedRows.isEmpty() || selectedCols.isEmpty()) return
                 
                 val sb = StringBuilder()
