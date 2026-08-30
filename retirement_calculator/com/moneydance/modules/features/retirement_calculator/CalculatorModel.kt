@@ -834,7 +834,6 @@ class YearRow(
             
             var taxableDistributionVal = 0.0
             var iraDistributionVal = 0.0
-            val rothConversionVal = 0.0
             var totalTax = 0.0
             var netCash = 0.0
             var currentDeduction = standardDeduction

@@ -743,7 +743,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 try {
                     val selection = java.awt.datatransfer.StringSelection(sb.toString())
                     java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
-                } catch (ex: Exception) {
+                } catch (_: Exception) {
                     // Fail silently
                 }
             }
