@@ -27,7 +27,8 @@ data class FinancialEvent(
     val date: LocalDate,
     val type: String,
     val amount: Double,
-    val isIncome: Boolean
+    val isIncome: Boolean,
+    val costBasis: Double = 0.0
 )
 
 data class PensionDefinition(
@@ -263,6 +264,8 @@ class YearRow(
     var oneTimeRothContribution: Double = 0.0
     var oneTimeTaxableContribution: Double = 0.0
     var oneTimeDafContribution: Double = 0.0
+    var oneTimeNuaTransfer: Double = 0.0
+    var oneTimeNuaBasis: Double = 0.0
 
     var salarySelf: Double = 0.0
     var salarySpouse: Double = 0.0
@@ -382,6 +385,10 @@ class YearRow(
                     "Roth IRA Contribution" -> oneTimeRothContribution += ev.amount
                     "Taxable Brokerage Contribution" -> oneTimeTaxableContribution += ev.amount
                     "DAF Contribution" -> oneTimeDafContribution += ev.amount
+                    "NUA Transfer (IRA to Brokerage)" -> {
+                        oneTimeNuaTransfer += ev.amount
+                        oneTimeNuaBasis += if (ev.costBasis > 0.0) ev.costBasis else ev.amount
+                    }
                 }
             } else {
                 when (ev.type) {
@@ -510,6 +517,17 @@ class YearRow(
         if (oneTimeDafContribution > 0.0) {
             dafContribution += oneTimeDafContribution
             dafSavings += oneTimeDafContribution
+        }
+
+        // Apply One-Time NUA Transfer (IRA to Brokerage)
+        if (oneTimeNuaTransfer > 0.0) {
+            val actualNua = min(iraSavings, oneTimeNuaTransfer)
+            val actualBasis = min(actualNua, oneTimeNuaBasis)
+            iraSavings -= actualNua
+            iraCash = max(0.0, iraCash - actualNua)
+            taxableSavings += actualNua
+            taxableCostBasis += actualBasis
+            oneTimeOrdinaryIncome += actualBasis
         }
 
         // Apply One-Time Distributions from Savings & DAF
@@ -2028,8 +2046,9 @@ class YearRow(
             val date = formData.getLocalDate("event_date_income_$i", LocalDate.of(year, 1, 1))
             val type = formData["event_type_income_$i"] ?: "Taxable Ordinary Income"
             val amt = formData.getDouble("event_amount_income_$i", 0.0)
+            val basis = formData.getDouble("event_basis_income_$i", 0.0)
             if (name.isNotEmpty() && amt != 0.0) {
-                list.add(FinancialEvent(name, date, type, amt, true))
+                list.add(FinancialEvent(name, date, type, amt, true, basis))
             }
         }
         
@@ -2231,15 +2250,16 @@ class YearRow(
                 "date" to ev.date.toString(),
                 "type" to ev.type,
                 "amount" to ev.amount,
-                "isIncome" to ev.isIncome
+                "isIncome" to ev.isIncome,
+                "costBasis" to ev.costBasis
             )
         }
         result["has_event_salary"] = yearEvents.any { it.type.startsWith("Bonus / Salary") }
-        result["has_event_income"] = yearEvents.any { it.type == "Taxable Ordinary Income" || it.type == "Non-Taxable Income" || it.type.startsWith("Bonus / Salary") }
+        result["has_event_income"] = yearEvents.any { it.type == "Taxable Ordinary Income" || it.type == "Non-Taxable Income" || it.type.startsWith("Bonus / Salary") || it.type == "NUA Transfer (IRA to Brokerage)" }
         result["has_event_expenses"] = yearEvents.any { it.type == "General Expense" || it.type == "Medical / Eldercare" }
-        result["has_event_ira"] = yearEvents.any { it.type == "Traditional IRA Contribution" || it.type == "Traditional IRA Distribution" }
+        result["has_event_ira"] = yearEvents.any { it.type == "Traditional IRA Contribution" || it.type == "Traditional IRA Distribution" || it.type == "NUA Transfer (IRA to Brokerage)" }
         result["has_event_roth"] = yearEvents.any { it.type == "Roth IRA Contribution" || it.type == "Roth IRA Distribution" }
-        result["has_event_taxable"] = yearEvents.any { it.type == "Taxable Brokerage Contribution" || it.type == "Taxable Brokerage Distribution" }
+        result["has_event_taxable"] = yearEvents.any { it.type == "Taxable Brokerage Contribution" || it.type == "Taxable Brokerage Distribution" || it.type == "NUA Transfer (IRA to Brokerage)" }
         result["has_event_daf"] = yearEvents.any { it.type == "DAF Contribution" || it.type == "DAF Distribution" }
         result["has_event_savings"] = (result["has_event_ira"] == true || result["has_event_roth"] == true || result["has_event_taxable"] == true || result["has_event_daf"] == true)
         result["has_event_distro"] = yearEvents.any { it.type.endsWith("Distribution") }

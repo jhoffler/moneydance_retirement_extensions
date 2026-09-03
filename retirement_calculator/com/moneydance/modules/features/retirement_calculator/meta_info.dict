@@ -3,7 +3,7 @@
   "module_name" = "Retirement Calculator"
   "module_desc" = "A native Retirement Calculator for MoneyDance."
   "desc" = "A native Retirement Calculator for MoneyDance."
-  "module_build" = "29807356"
+  "module_build" = "29807414"
   "minbuild" = "3056"
   "vendor" = "John Hoffler"
   "vendor.url" = "https://hofflergroup.com"

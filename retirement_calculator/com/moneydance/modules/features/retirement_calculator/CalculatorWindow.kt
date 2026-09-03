@@ -2973,7 +2973,13 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             val date = eventsConfig["event_date_${prefix}_$i"] ?: ""
             val type = eventsConfig["event_type_${prefix}_$i"] ?: ""
             val amt = eventsConfig["event_amount_${prefix}_$i"]?.toDoubleOrNull() ?: 0.0
-            model.addRow(arrayOf(date, name, type, df.format(amt)))
+            val basis = eventsConfig["event_basis_${prefix}_$i"]?.toDoubleOrNull() ?: 0.0
+            val amtStr = if (type == "NUA Transfer (IRA to Brokerage)" && basis > 0.0) {
+                "${df.format(amt)} (Basis: ${df.format(basis)})"
+            } else {
+                df.format(amt)
+            }
+            model.addRow(arrayOf(date, name, type, amtStr))
         }
     }
 
@@ -2988,12 +2994,14 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             eventsConfig["event_date_${prefix}_$i"] = eventsConfig["event_date_${prefix}_$next"] ?: ""
             eventsConfig["event_type_${prefix}_$i"] = eventsConfig["event_type_${prefix}_$next"] ?: ""
             eventsConfig["event_amount_${prefix}_$i"] = eventsConfig["event_amount_${prefix}_$next"] ?: ""
+            eventsConfig["event_basis_${prefix}_$i"] = eventsConfig["event_basis_${prefix}_$next"] ?: ""
         }
         val last = count - 1
         eventsConfig.remove("event_name_${prefix}_$last")
         eventsConfig.remove("event_date_${prefix}_$last")
         eventsConfig.remove("event_type_${prefix}_$last")
         eventsConfig.remove("event_amount_${prefix}_$last")
+        eventsConfig.remove("event_basis_${prefix}_$last")
         eventsConfig["event_count_$prefix"] = last.toString()
 
         refreshEventsTable(isIncome)
@@ -3061,7 +3069,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 "Traditional IRA Contribution",
                 "Roth IRA Contribution",
                 "Taxable Brokerage Contribution",
-                "DAF Contribution"
+                "DAF Contribution",
+                "NUA Transfer (IRA to Brokerage)"
             )
         } else {
             arrayOf(
@@ -3094,6 +3103,30 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         formPanel.add(amountField, gbc)
 
+        // 5. Cost Basis (for NUA Transfer)
+        gbc.gridx = 0; gbc.gridy = 4; gbc.weightx = 0.3
+        val basisLabel = JLabel("Cost Basis (NUA):")
+        formPanel.add(basisLabel, gbc)
+        gbc.gridx = 1; gbc.weightx = 0.7
+        val basisField = JTextField(12)
+        basisField.horizontalAlignment = JTextField.RIGHT
+        if (isEdit) {
+            val basisVal = eventsConfig["event_basis_${prefix}_$editIndex"]?.toDoubleOrNull() ?: 0.0
+            basisField.text = formatDollar(basisVal)
+        } else {
+            basisField.text = "0"
+        }
+        formPanel.add(basisField, gbc)
+
+        fun updateNuaVisibility() {
+            val isNua = isIncome && typeCombo.selectedItem?.toString() == "NUA Transfer (IRA to Brokerage)"
+            basisLabel.isVisible = isNua
+            basisField.isVisible = isNua
+            dialog.pack()
+        }
+        typeCombo.addActionListener { updateNuaVisibility() }
+        updateNuaVisibility()
+
         dialog.add(formPanel, BorderLayout.CENTER)
 
         val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
@@ -3117,17 +3150,33 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 return@addActionListener
             }
 
+            var basisAmt = 0.0
+            val selectedType = typeCombo.selectedItem?.toString() ?: types[0]
+            if (isIncome && selectedType == "NUA Transfer (IRA to Brokerage)") {
+                val basisClean = basisField.text.replace("$", "").replace(",", "").trim()
+                val parsedBasis = basisClean.toDoubleOrNull()
+                if (parsedBasis == null || parsedBasis < 0.0) {
+                    JOptionPane.showMessageDialog(dialog, "Please enter a valid cost basis for the NUA transfer.", "Validation Error", JOptionPane.ERROR_MESSAGE)
+                    return@addActionListener
+                }
+                if (parsedBasis > amt) {
+                    JOptionPane.showMessageDialog(dialog, "Cost basis cannot exceed the total transfer amount.", "Validation Error", JOptionPane.ERROR_MESSAGE)
+                    return@addActionListener
+                }
+                basisAmt = parsedBasis
+            }
+
             val y = dInt / 10000
             val m = (dInt % 10000) / 100
             val d = dInt % 100
             val dateStr = String.format("%04d-%02d-%02d", y, m, d)
-            val selectedType = typeCombo.selectedItem?.toString() ?: types[0]
 
             val targetIdx = if (isEdit) editIndex else (eventsConfig["event_count_$prefix"]?.toIntOrNull() ?: 0)
             eventsConfig["event_name_${prefix}_$targetIdx"] = name
             eventsConfig["event_date_${prefix}_$targetIdx"] = dateStr
             eventsConfig["event_type_${prefix}_$targetIdx"] = selectedType
             eventsConfig["event_amount_${prefix}_$targetIdx"] = amt.toString()
+            eventsConfig["event_basis_${prefix}_$targetIdx"] = basisAmt.toString()
 
             if (!isEdit) {
                 eventsConfig["event_count_$prefix"] = (targetIdx + 1).toString()
@@ -3448,9 +3497,11 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
                 val eType = ev["type"]?.toString() ?: ""
                 val eAmt = (ev["amount"] as? Number)?.toDouble() ?: 0.0
                 val isInc = ev["isIncome"] as? Boolean ?: true
-                val sign = if (eAmt >= 0) (if (isInc) "+" else "-") else ""
+                val eBasis = (ev["costBasis"] as? Number)?.toDouble() ?: 0.0
+                val basisNote = if (eType == "NUA Transfer (IRA to Brokerage)" && eBasis > 0.0) " [Basis: " + df.format(eBasis) + "]" else ""
+                val sign = if (eType == "NUA Transfer (IRA to Brokerage)") "Transfer " else if (eAmt >= 0) (if (isInc) "+" else "-") else ""
                 eventsHtml.append("• ").append(eDate).append(" ").append(eName).append(": ")
-                    .append(sign).append(df.format(eAmt)).append(" (").append(eType).append(")<br>")
+                    .append(sign).append(df.format(eAmt)).append(basisNote).append(" (").append(eType).append(")<br>")
             }
             eventsHtml.append("</div>")
             
