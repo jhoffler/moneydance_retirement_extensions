@@ -349,7 +349,16 @@ class YearRow(
                 taxableCostBasis = taxableSavings * 0.5
             }
             dafSavings = formData.getDouble("start_daf_savings", 0.0)
-            dafDistribution = formData.getDouble("daf_distro", 0.0)
+            val asOfDate = formData.getLocalDate("as_of_date", formData.getLocalDate("start_date", LocalDate.of(year, 1, 1)))
+            val fullMonthsRemaining = when {
+                asOfDate.year < year -> 12
+                asOfDate.year > year -> 0
+                asOfDate.dayOfMonth == 1 -> 12 - asOfDate.monthValue + 1
+                else -> 12 - asOfDate.monthValue
+            }
+            val fullMonths = max(0, min(12, fullMonthsRemaining))
+            val baseDafDistro = formData.getDouble("daf_distro", 0.0)
+            dafDistribution = baseDafDistro * (fullMonths / 12.0)
             
             iraCash = formData.getDouble("start_ira_cash", iraSavings * 0.10)
             rothCash = formData.getDouble("start_roth_cash", rothSavings * 0.10)
@@ -415,7 +424,7 @@ class YearRow(
             taxableCash = previousYear.taxableCashEnd
             taxableCostBasis = previousYear.taxableCostBasisEnd
             dafSavings = previousYear.dafSavingsEnd
-            dafDistribution = previousYear.dafDistribution * (1.0 + previousYear.inflationPct)
+            dafDistribution = formData.getDouble("daf_distro", 0.0) * inflationAdjustmentFactor
 
             // Clone and grow previous year's stock lots
             for (prevLot in previousYear.taxableLotsEnd) {
