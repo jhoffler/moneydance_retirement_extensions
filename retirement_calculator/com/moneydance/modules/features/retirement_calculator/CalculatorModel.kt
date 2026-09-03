@@ -22,6 +22,14 @@ data class StockLot(
         get() = if (currentVal > 0.0) costBasis / currentVal else 0.0
 }
 
+data class FinancialEvent(
+    val name: String,
+    val date: LocalDate,
+    val type: String,
+    val amount: Double,
+    val isIncome: Boolean
+)
+
 data class PensionDefinition(
     val name: String,
     var startAge: Double,
@@ -236,6 +244,26 @@ class YearRow(
     var shouldRebalance: Boolean = true
     var fedTaxableSocialSecurity: Double = 0.0
 
+    var baseSalarySelf: Double = 0.0
+    var baseSalarySpouse: Double = 0.0
+
+    val financialEvents: List<FinancialEvent>
+    val yearEvents: List<FinancialEvent>
+    var oneTimeOrdinaryIncome: Double = 0.0
+    var oneTimeNonTaxableIncome: Double = 0.0
+    var oneTimeSalarySelf: Double = 0.0
+    var oneTimeSalarySpouse: Double = 0.0
+    var oneTimeGeneralExpense: Double = 0.0
+    var oneTimeMedicalExpense: Double = 0.0
+    var oneTimeIraDistribution: Double = 0.0
+    var oneTimeRothDistribution: Double = 0.0
+    var oneTimeTaxableDistribution: Double = 0.0
+    var oneTimeDafDistribution: Double = 0.0
+    var oneTimeIraContribution: Double = 0.0
+    var oneTimeRothContribution: Double = 0.0
+    var oneTimeTaxableContribution: Double = 0.0
+    var oneTimeDafContribution: Double = 0.0
+
     var salarySelf: Double = 0.0
     var salarySpouse: Double = 0.0
     var socSecSelf: Double = 0.0
@@ -337,6 +365,36 @@ class YearRow(
         interestRate = formData.getDouble("interest_rate", 3.0) / 100.0
         dividendRate = formData.getDouble("dividend_rate", 0.5) / 100.0
 
+        financialEvents = parseFinancialEvents()
+        val asOfDateFilter = if (previousYear == null) formData.getLocalDate("as_of_date", formData.getLocalDate("start_date", LocalDate.of(year, 1, 1))) else null
+        yearEvents = financialEvents.filter { 
+            it.date.year == year && (asOfDateFilter == null || !it.date.isBefore(asOfDateFilter)) 
+        }
+
+        for (ev in yearEvents) {
+            if (ev.isIncome) {
+                when (ev.type) {
+                    "Bonus / Salary (Self)" -> oneTimeSalarySelf += ev.amount
+                    "Bonus / Salary (Spouse)" -> oneTimeSalarySpouse += ev.amount
+                    "Taxable Ordinary Income" -> oneTimeOrdinaryIncome += ev.amount
+                    "Non-Taxable Income" -> oneTimeNonTaxableIncome += ev.amount
+                    "Traditional IRA Contribution" -> oneTimeIraContribution += ev.amount
+                    "Roth IRA Contribution" -> oneTimeRothContribution += ev.amount
+                    "Taxable Brokerage Contribution" -> oneTimeTaxableContribution += ev.amount
+                    "DAF Contribution" -> oneTimeDafContribution += ev.amount
+                }
+            } else {
+                when (ev.type) {
+                    "General Expense" -> oneTimeGeneralExpense += ev.amount
+                    "Medical / Eldercare" -> oneTimeMedicalExpense += ev.amount
+                    "Traditional IRA Distribution" -> oneTimeIraDistribution += ev.amount
+                    "Roth IRA Distribution" -> oneTimeRothDistribution += ev.amount
+                    "Taxable Brokerage Distribution" -> oneTimeTaxableDistribution += ev.amount
+                    "DAF Distribution" -> oneTimeDafDistribution += ev.amount
+                }
+            }
+        }
+
         if (previousYear == null) {
             iraSavings = formData.getDouble("start_ira_savings", 1000000.0)
             rothSavings = formData.getDouble("start_roth_savings", 1000000.0)
@@ -435,6 +493,57 @@ class YearRow(
         val maxDafSavings = dafSavings * (1.0 + investReturnPct)
         dafDistribution = min(dafDistribution, maxDafSavings)
 
+        // Apply One-Time Contributions to Savings & DAF
+        if (oneTimeIraContribution > 0.0) {
+            iraSavings += oneTimeIraContribution
+            iraCash += oneTimeIraContribution
+        }
+        if (oneTimeRothContribution > 0.0) {
+            rothSavings += oneTimeRothContribution
+            rothCash += oneTimeRothContribution
+        }
+        if (oneTimeTaxableContribution > 0.0) {
+            taxableSavings += oneTimeTaxableContribution
+            taxableCash += oneTimeTaxableContribution
+            taxableCostBasis += oneTimeTaxableContribution
+        }
+        if (oneTimeDafContribution > 0.0) {
+            dafContribution += oneTimeDafContribution
+            dafSavings += oneTimeDafContribution
+        }
+
+        // Apply One-Time Distributions from Savings & DAF
+        if (oneTimeDafDistribution > 0.0) {
+            val dist = min(dafSavings, oneTimeDafDistribution)
+            dafDistribution += dist
+        }
+        if (oneTimeIraDistribution > 0.0) {
+            val dist = min(iraSavings, oneTimeIraDistribution)
+            iraSavings -= dist
+            iraCash = max(0.0, iraCash - dist)
+            iraDistribution += dist
+            oneTimeOrdinaryIncome += dist
+        }
+        if (oneTimeRothDistribution > 0.0) {
+            val dist = min(rothSavings, oneTimeRothDistribution)
+            rothSavings -= dist
+            rothCash = max(0.0, rothCash - dist)
+            rothDistribution += dist
+            oneTimeNonTaxableIncome += dist
+        }
+        if (oneTimeTaxableDistribution > 0.0) {
+            val dist = min(taxableSavings, oneTimeTaxableDistribution)
+            val basisRatio = if (taxableSavings > 0.0) taxableCostBasis / taxableSavings else 1.0
+            val basisUsed = dist * basisRatio
+            val gain = max(0.0, dist - basisUsed)
+            taxableSavings -= dist
+            taxableCash = max(0.0, taxableCash - dist)
+            taxableCostBasis = max(0.0, taxableCostBasis - basisUsed)
+            taxableDistribution += dist
+            realizedGain += gain
+            oneTimeNonTaxableIncome += (dist - gain)
+        }
+
         // Calculate incomes
         calculateBaseIncome(previousYear)
         
@@ -481,9 +590,13 @@ class YearRow(
             salarySelf = if (ageSelf <= deathAgeSelf) formData.getDouble("salary", 60000.0) * fractionOfYearBefore(retirementDateSelf) else 0.0
             salarySpouse = if (ageSpouse <= deathAgeSpouse) formData.getDouble("salary_spouse", 30000.0) * fractionOfYearBefore(retirementDateSpouse) else 0.0
         } else {
-            salarySelf = if (ageSelf <= deathAgeSelf) previousYear.salarySelf * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSelf) else 0.0
-            salarySpouse = if (ageSpouse <= deathAgeSpouse) previousYear.salarySpouse * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSpouse) else 0.0
+            salarySelf = if (ageSelf <= deathAgeSelf) previousYear.baseSalarySelf * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSelf) else 0.0
+            salarySpouse = if (ageSpouse <= deathAgeSpouse) previousYear.baseSalarySpouse * (1.0 + previousYear.raisePct) * fractionOfYearBefore(retirementDateSpouse) else 0.0
         }
+        baseSalarySelf = salarySelf
+        baseSalarySpouse = salarySpouse
+        salarySelf += oneTimeSalarySelf
+        salarySpouse += oneTimeSalarySpouse
 
         val baseSsSelf = if (ageSelf <= deathAgeSelf) calcBaseSocSecIncome(true) else 0.0
         val baseSsSpouse = if (ageSpouse <= deathAgeSpouse) calcBaseSocSecIncome(false) else 0.0
@@ -601,7 +714,7 @@ class YearRow(
         val selfCareToday = calculatePersonEldercare(ageSelf, deathAgeSelf)
         val spouseCareToday = calculatePersonEldercare(ageSpouse, deathAgeSpouse)
 
-        elderCare = (selfCareToday + spouseCareToday) * inflationAdjustmentFactor
+        elderCare = (selfCareToday + spouseCareToday) * inflationAdjustmentFactor + oneTimeMedicalExpense
 
         val neitherAlive = (ageSelf > deathAgeSelf) && (ageSpouse > deathAgeSpouse)
         val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
@@ -621,7 +734,7 @@ class YearRow(
             guardrailAdjustmentMessage = null
             if (isRetired && guardrailPct >= 0.0) {
                 val totalsavings = iraSavings + rothSavings + taxableSavings
-                val netCash = mortgage + elderCare + otherExpenses + travel - getOtherIncome() - socSecSelf - socSecSpouse - pensionSelf - pensionSpouse
+                val netCash = mortgage + elderCare + otherExpenses + travel - getOtherIncome() - socSecSelf - socSecSpouse - pensionSelf - pensionSpouse - oneTimeNonTaxableIncome
                 val baseTargetSavings = netCash / 0.04
                 val triggerThreshold = baseTargetSavings * (guardrailPct / 100.0)
                 if (totalsavings < triggerThreshold) {
@@ -647,6 +760,7 @@ class YearRow(
                 }
             }
         }
+        otherExpenses += oneTimeGeneralExpense
     }
 
     fun getTotalSavings(): Double {
@@ -659,7 +773,7 @@ class YearRow(
     }
 
     private fun optimizeWithdrawalsForNetCash() {
-        dafContribution = 0.0
+        dafContribution = oneTimeDafContribution
         qcdAmount = 0.0
         val targetNetCash = mortgage + elderCare + otherExpenses + travel
         val estimatedGrossNeeded = targetNetCash + payrollTaxes + propertyTaxes + 5000.0
@@ -738,7 +852,7 @@ class YearRow(
         val maxRoth = max(0.0, rothCashPre + rothNonCashPre)
         
         val rmdValue = min(suggestRmd(), maxIra)
-        val fixedCash = getOtherIncome() + socSecSelf + socSecSpouse
+        val fixedCash = getOtherIncome() + socSecSelf + socSecSpouse + oneTimeNonTaxableIncome
         
         val isPreRmdRetirement = (ageSelf >= 59.5 || ageSpouse >= 59.5) && suggestRmd() < 0.01
 
@@ -753,7 +867,7 @@ class YearRow(
             var rothDistributionVal = 0.0
             
             for (iter in 0 until 10) {
-                val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + rmdValue
+                val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + rmdValue + oneTimeOrdinaryIncome
                 val unusedDeduction = max(0.0, standardDeduction - guaranteedOrdinary)
                 
                 val shortfall = targetNetCash + totalTax - (fixedCash + rmdValue)
@@ -844,7 +958,7 @@ class YearRow(
             }
             val isRoiNegative = investReturnPct < 0.0 || cumulativeRoi < 0.0
 
-            val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
+            val guaranteedOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + oneTimeOrdinaryIncome
             
             var taxableDistributionVal = 0.0
             var iraDistributionVal = 0.0
@@ -1602,11 +1716,11 @@ class YearRow(
     }
 
     fun getOrdinaryIncome(): Double {
-        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest
+        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + oneTimeOrdinaryIncome
     }
 
     fun getOtherIncome(): Double {
-        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + taxableDividends
+        return salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + taxableDividends + oneTimeOrdinaryIncome
     }
 
     data class TaxCalculationResult(
@@ -1905,6 +2019,33 @@ class YearRow(
         return list
     }
 
+    private fun parseFinancialEvents(): List<FinancialEvent> {
+        val list = mutableListOf<FinancialEvent>()
+        
+        val incomeCount = formData["event_count_income"]?.toIntOrNull() ?: 0
+        for (i in 0 until incomeCount) {
+            val name = formData["event_name_income_$i"] ?: "Income Event ${i + 1}"
+            val date = formData.getLocalDate("event_date_income_$i", LocalDate.of(year, 1, 1))
+            val type = formData["event_type_income_$i"] ?: "Taxable Ordinary Income"
+            val amt = formData.getDouble("event_amount_income_$i", 0.0)
+            if (name.isNotEmpty() && amt != 0.0) {
+                list.add(FinancialEvent(name, date, type, amt, true))
+            }
+        }
+        
+        val expenseCount = formData["event_count_expense"]?.toIntOrNull() ?: 0
+        for (i in 0 until expenseCount) {
+            val name = formData["event_name_expense_$i"] ?: "Expense Event ${i + 1}"
+            val date = formData.getLocalDate("event_date_expense_$i", LocalDate.of(year, 1, 1))
+            val type = formData["event_type_expense_$i"] ?: "General Expense"
+            val amt = formData.getDouble("event_amount_expense_$i", 0.0)
+            if (name.isNotEmpty() && amt != 0.0) {
+                list.add(FinancialEvent(name, date, type, amt, false))
+            }
+        }
+        return list
+    }
+
     private fun getFirstYear(): YearRow {
         var cur = this
         while (cur.previousYear != null) {
@@ -2084,6 +2225,24 @@ class YearRow(
         result["inflation_pct"] = inflationPct
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
         result["stock_lots"] = taxableLotsStart.map { StockLot(it.name, it.costBasis, it.currentVal) }
+        result["one_time_events"] = yearEvents.map { ev ->
+            mapOf(
+                "name" to ev.name,
+                "date" to ev.date.toString(),
+                "type" to ev.type,
+                "amount" to ev.amount,
+                "isIncome" to ev.isIncome
+            )
+        }
+        result["has_event_salary"] = yearEvents.any { it.type.startsWith("Bonus / Salary") }
+        result["has_event_income"] = yearEvents.any { it.type == "Taxable Ordinary Income" || it.type == "Non-Taxable Income" || it.type.startsWith("Bonus / Salary") }
+        result["has_event_expenses"] = yearEvents.any { it.type == "General Expense" || it.type == "Medical / Eldercare" }
+        result["has_event_ira"] = yearEvents.any { it.type == "Traditional IRA Contribution" || it.type == "Traditional IRA Distribution" }
+        result["has_event_roth"] = yearEvents.any { it.type == "Roth IRA Contribution" || it.type == "Roth IRA Distribution" }
+        result["has_event_taxable"] = yearEvents.any { it.type == "Taxable Brokerage Contribution" || it.type == "Taxable Brokerage Distribution" }
+        result["has_event_daf"] = yearEvents.any { it.type == "DAF Contribution" || it.type == "DAF Distribution" }
+        result["has_event_savings"] = (result["has_event_ira"] == true || result["has_event_roth"] == true || result["has_event_taxable"] == true || result["has_event_daf"] == true)
+        result["has_event_distro"] = yearEvents.any { it.type.endsWith("Distribution") }
         return result
     }
 }

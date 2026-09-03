@@ -37,6 +37,15 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     private val dateFields = mutableMapOf<String, com.moneydance.awt.JDateField>()
     private val comboBoxes = mutableMapOf<String, JComboBox<String>>()
     private val pensionsConfig = mutableMapOf<String, String>()
+    private val eventsConfig = mutableMapOf<String, String>()
+    private val incomeEventsModel = object : DefaultTableModel(arrayOf("Date", "Name", "Type", "Amount"), 0) {
+        override fun isCellEditable(row: Int, column: Int): Boolean = false
+    }
+    private val incomeEventsTable = JTable(incomeEventsModel)
+    private val expenseEventsModel = object : DefaultTableModel(arrayOf("Date", "Name", "Type", "Amount"), 0) {
+        override fun isCellEditable(row: Int, column: Int): Boolean = false
+    }
+    private val expenseEventsTable = JTable(expenseEventsModel)
     
     // UI elements
     private val tableModel = DefaultTableModel()
@@ -422,6 +431,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         managePensionsButtonSpouse.addActionListener { showPensionManagerDialog(false) }
         spousePanel.add(managePensionsButtonSpouse)
         container.add(spousePanel)
+        container.add(Box.createVerticalStrut(10))
+        container.add(createOneTimeEventsPanel(true))
 
         val wrapper = JPanel(BorderLayout())
         wrapper.add(container, BorderLayout.NORTH)
@@ -605,6 +616,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         addGridBagFieldRow(dafPanel, "DAF Annual Dist:", "daf_distro", 0)
         addGridBagFieldRow(dafPanel, "DAF Excess Pct %:", "daf_excess_pct", 1)
         container.add(dafPanel)
+        container.add(Box.createVerticalStrut(10))
+        container.add(createOneTimeEventsPanel(false))
 
         val wrapper = JPanel(BorderLayout())
         wrapper.add(container, BorderLayout.NORTH)
@@ -839,11 +852,16 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
     // Dynamic JSON Form Data Loading
     private fun setFormData(data: Map<String, String>) {
         pensionsConfig.clear()
+        eventsConfig.clear()
         for ((k, v) in data) {
             if (k.startsWith("pension_")) {
                 pensionsConfig[k] = v
+            } else if (k.startsWith("event_")) {
+                eventsConfig[k] = v
             }
         }
+        refreshEventsTable(true)
+        refreshEventsTable(false)
         
         // Backward compatibility: Convert legacy fields if dynamic count not defined
         if (!pensionsConfig.containsKey("pension_count_self")) {
@@ -969,6 +987,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
             map["as_of_date"] = String.format("%04d-%02d-%02d", y, m, d)
         }
         map.putAll(pensionsConfig)
+        map.putAll(eventsConfig)
         return map
     }
 
@@ -2879,6 +2898,254 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         return points
     }
+
+    private fun createOneTimeEventsPanel(isIncome: Boolean): JPanel {
+        val title = if (isIncome) "One-Time Income Events" else "One-Time Expense Events"
+        val panel = JPanel(BorderLayout(5, 5))
+        panel.border = TitledBorder(title)
+
+        val table = if (isIncome) incomeEventsTable else expenseEventsTable
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        table.rowHeight = 22
+
+        // Currency alignment for Amount column (index 3)
+        val rightRenderer = DefaultTableCellRenderer()
+        rightRenderer.horizontalAlignment = JLabel.RIGHT
+        table.columnModel.getColumn(3).cellRenderer = rightRenderer
+
+        // Center alignment for Date (index 0) and Type (index 2)
+        val centerRenderer = DefaultTableCellRenderer()
+        centerRenderer.horizontalAlignment = JLabel.CENTER
+        table.columnModel.getColumn(0).cellRenderer = centerRenderer
+        table.columnModel.getColumn(2).cellRenderer = centerRenderer
+
+        table.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2 && table.selectedRow >= 0) {
+                    showFinancialEventDialog(isIncome, table.selectedRow)
+                }
+            }
+        })
+
+        val scroll = JScrollPane(table)
+        scroll.preferredSize = Dimension(380, 110)
+        panel.add(scroll, BorderLayout.CENTER)
+
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 5, 2))
+        val addBtn = JButton("Add Event...")
+        addBtn.addActionListener { showFinancialEventDialog(isIncome, -1) }
+        val editBtn = JButton("Edit Selected...")
+        editBtn.addActionListener {
+            val sel = table.selectedRow
+            if (sel >= 0) {
+                showFinancialEventDialog(isIncome, sel)
+            } else {
+                JOptionPane.showMessageDialog(this, "Please select an event to edit.", "No Selection", JOptionPane.WARNING_MESSAGE)
+            }
+        }
+        val delBtn = JButton("Delete Selected")
+        delBtn.addActionListener {
+            val sel = table.selectedRow
+            if (sel >= 0) {
+                deleteFinancialEvent(isIncome, sel)
+            } else {
+                JOptionPane.showMessageDialog(this, "Please select an event to delete.", "No Selection", JOptionPane.WARNING_MESSAGE)
+            }
+        }
+
+        btnPanel.add(addBtn)
+        btnPanel.add(editBtn)
+        btnPanel.add(delBtn)
+        panel.add(btnPanel, BorderLayout.SOUTH)
+
+        refreshEventsTable(isIncome)
+        return panel
+    }
+
+    private fun refreshEventsTable(isIncome: Boolean) {
+        val prefix = if (isIncome) "income" else "expense"
+        val model = if (isIncome) incomeEventsModel else expenseEventsModel
+        model.rowCount = 0
+        val count = eventsConfig["event_count_$prefix"]?.toIntOrNull() ?: 0
+        val df = DecimalFormat("$#,##0.00")
+        for (i in 0 until count) {
+            val name = eventsConfig["event_name_${prefix}_$i"] ?: ""
+            val date = eventsConfig["event_date_${prefix}_$i"] ?: ""
+            val type = eventsConfig["event_type_${prefix}_$i"] ?: ""
+            val amt = eventsConfig["event_amount_${prefix}_$i"]?.toDoubleOrNull() ?: 0.0
+            model.addRow(arrayOf(date, name, type, df.format(amt)))
+        }
+    }
+
+    private fun deleteFinancialEvent(isIncome: Boolean, index: Int) {
+        val prefix = if (isIncome) "income" else "expense"
+        val count = eventsConfig["event_count_$prefix"]?.toIntOrNull() ?: 0
+        if (index < 0 || index >= count) return
+
+        for (i in index until count - 1) {
+            val next = i + 1
+            eventsConfig["event_name_${prefix}_$i"] = eventsConfig["event_name_${prefix}_$next"] ?: ""
+            eventsConfig["event_date_${prefix}_$i"] = eventsConfig["event_date_${prefix}_$next"] ?: ""
+            eventsConfig["event_type_${prefix}_$i"] = eventsConfig["event_type_${prefix}_$next"] ?: ""
+            eventsConfig["event_amount_${prefix}_$i"] = eventsConfig["event_amount_${prefix}_$next"] ?: ""
+        }
+        val last = count - 1
+        eventsConfig.remove("event_name_${prefix}_$last")
+        eventsConfig.remove("event_date_${prefix}_$last")
+        eventsConfig.remove("event_type_${prefix}_$last")
+        eventsConfig.remove("event_amount_${prefix}_$last")
+        eventsConfig["event_count_$prefix"] = last.toString()
+
+        refreshEventsTable(isIncome)
+        recalc()
+    }
+
+    private fun showFinancialEventDialog(isIncome: Boolean, editIndex: Int) {
+        val prefix = if (isIncome) "income" else "expense"
+        val isEdit = editIndex >= 0
+        val title = if (isEdit) {
+            "Edit ${if (isIncome) "Income" else "Expense"} Event"
+        } else {
+            "Add ${if (isIncome) "Income" else "Expense"} Event"
+        }
+
+        val dialog = JDialog(this, title, true)
+        dialog.layout = BorderLayout(10, 10)
+
+        val formPanel = JPanel(GridBagLayout())
+        formPanel.border = EmptyBorder(15, 15, 15, 15)
+        val gbc = GridBagConstraints()
+        gbc.fill = GridBagConstraints.HORIZONTAL
+        gbc.insets = Insets(5, 5, 5, 5)
+
+        // 1. Name
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.3
+        formPanel.add(JLabel("Name:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 0.7
+        val nameField = JTextField(20)
+        if (isEdit) nameField.text = eventsConfig["event_name_${prefix}_$editIndex"] ?: ""
+        formPanel.add(nameField, gbc)
+
+        // 2. Date
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.3
+        formPanel.add(JLabel("Date:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 0.7
+        val datePicker = com.moneydance.awt.JDateField(com.infinitekind.util.CustomDateFormat("yyyy-MM-dd"))
+        if (isEdit) {
+            val dStr = eventsConfig["event_date_${prefix}_$editIndex"] ?: ""
+            if (dStr.contains("-")) {
+                val p = dStr.split("-")
+                if (p.size == 3) {
+                    val y = p[0].toIntOrNull() ?: 2026
+                    val m = p[1].toIntOrNull() ?: 1
+                    val d = p[2].toIntOrNull() ?: 1
+                    datePicker.dateInt = y * 10000 + m * 100 + d
+                }
+            }
+        } else {
+            val startYear = textFields["start_year"]?.text?.toIntOrNull() ?: 2026
+            datePicker.dateInt = startYear * 10000 + 101
+        }
+        formPanel.add(datePicker, gbc)
+
+        // 3. Type
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.3
+        formPanel.add(JLabel("Type:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 0.7
+        val types = if (isIncome) {
+            arrayOf(
+                "Bonus / Salary (Self)",
+                "Bonus / Salary (Spouse)",
+                "Taxable Ordinary Income",
+                "Non-Taxable Income",
+                "Traditional IRA Contribution",
+                "Roth IRA Contribution",
+                "Taxable Brokerage Contribution",
+                "DAF Contribution"
+            )
+        } else {
+            arrayOf(
+                "General Expense",
+                "Medical / Eldercare",
+                "Traditional IRA Distribution",
+                "Roth IRA Distribution",
+                "Taxable Brokerage Distribution",
+                "DAF Distribution"
+            )
+        }
+        val typeCombo = JComboBox(types)
+        if (isEdit) {
+            val currentType = eventsConfig["event_type_${prefix}_$editIndex"]
+            if (currentType != null) typeCombo.selectedItem = currentType
+        }
+        formPanel.add(typeCombo, gbc)
+
+        // 4. Amount
+        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0.3
+        formPanel.add(JLabel("Amount:"), gbc)
+        gbc.gridx = 1; gbc.weightx = 0.7
+        val amountField = JTextField(12)
+        amountField.horizontalAlignment = JTextField.RIGHT
+        if (isEdit) {
+            val amt = eventsConfig["event_amount_${prefix}_$editIndex"]?.toDoubleOrNull() ?: 0.0
+            amountField.text = formatDollar(amt)
+        } else {
+            amountField.text = "10000"
+        }
+        formPanel.add(amountField, gbc)
+
+        dialog.add(formPanel, BorderLayout.CENTER)
+
+        val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT))
+        val okBtn = JButton("OK")
+        val cancelBtn = JButton("Cancel")
+        okBtn.addActionListener {
+            val name = nameField.text.trim()
+            if (name.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Please enter an event name.", "Validation Error", JOptionPane.ERROR_MESSAGE)
+                return@addActionListener
+            }
+            val dInt = datePicker.dateInt
+            if (dInt <= 0) {
+                JOptionPane.showMessageDialog(dialog, "Please select a valid date.", "Validation Error", JOptionPane.ERROR_MESSAGE)
+                return@addActionListener
+            }
+            val amtClean = amountField.text.replace("$", "").replace(",", "").trim()
+            val amt = amtClean.toDoubleOrNull()
+            if (amt == null) {
+                JOptionPane.showMessageDialog(dialog, "Please enter a valid amount.", "Validation Error", JOptionPane.ERROR_MESSAGE)
+                return@addActionListener
+            }
+
+            val y = dInt / 10000
+            val m = (dInt % 10000) / 100
+            val d = dInt % 100
+            val dateStr = String.format("%04d-%02d-%02d", y, m, d)
+            val selectedType = typeCombo.selectedItem?.toString() ?: types[0]
+
+            val targetIdx = if (isEdit) editIndex else (eventsConfig["event_count_$prefix"]?.toIntOrNull() ?: 0)
+            eventsConfig["event_name_${prefix}_$targetIdx"] = name
+            eventsConfig["event_date_${prefix}_$targetIdx"] = dateStr
+            eventsConfig["event_type_${prefix}_$targetIdx"] = selectedType
+            eventsConfig["event_amount_${prefix}_$targetIdx"] = amt.toString()
+
+            if (!isEdit) {
+                eventsConfig["event_count_$prefix"] = (targetIdx + 1).toString()
+            }
+
+            refreshEventsTable(isIncome)
+            dialog.dispose()
+            recalc()
+        }
+        cancelBtn.addActionListener { dialog.dispose() }
+        btnPanel.add(okBtn)
+        btnPanel.add(cancelBtn)
+        dialog.add(btnPanel, BorderLayout.SOUTH)
+
+        dialog.pack()
+        dialog.setLocationRelativeTo(this)
+        dialog.isVisible = true
+    }
 }
 
 // Table cell highlighting cell renderer
@@ -2918,6 +3185,22 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
         val rowData = tableData[row]
         val modelIdx = table.convertColumnIndexToModel(column)
         val colName = table.model.getColumnName(modelIdx)
+        
+        val hasEvent = when {
+            colName == "Year" -> (rowData["one_time_events"] as? List<*>)?.isNotEmpty() == true
+            colName == "Salary" || colName == "Pre-Tax Income" -> rowData["has_event_salary"] == true || rowData["has_event_income"] == true
+            colName == "Expenses" || colName == "Other Spending" || colName == "Travel & Eldercare" -> rowData["has_event_expenses"] == true
+            colName == "Savings" -> rowData["has_event_savings"] == true
+            colName == "IRA" -> rowData["has_event_ira"] == true
+            colName == "Roth" -> rowData["has_event_roth"] == true
+            colName == "Taxable" -> rowData["has_event_taxable"] == true
+            colName == "DAF" -> rowData["has_event_daf"] == true
+            colName == "Distrib" -> rowData["has_event_distro"] == true
+            else -> false
+        }
+        if (hasEvent) {
+            cell.font = cell.font.deriveFont(java.awt.Font.ITALIC)
+        }
         
         val isDistro = colName.lowercase().contains("distro") || colName.lowercase().contains("distrib")
         
@@ -3151,6 +3434,33 @@ class CustomRowRenderer(private val tableData: List<Map<String, Any>>) : Default
             }
             else -> {
                 cell.toolTipText = null
+            }
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val eventsList = rowData["one_time_events"] as? List<Map<String, Any>>
+        if (!eventsList.isNullOrEmpty() && hasEvent) {
+            val df = DecimalFormat("$#,##0")
+            val eventsHtml = StringBuilder("<div style='margin-top: 5px; border-top: 1px dashed gray; padding-top: 3px;'><b>One-Time Events:</b><br>")
+            for (ev in eventsList) {
+                val eName = ev["name"]?.toString() ?: ""
+                val eDate = ev["date"]?.toString() ?: ""
+                val eType = ev["type"]?.toString() ?: ""
+                val eAmt = (ev["amount"] as? Number)?.toDouble() ?: 0.0
+                val isInc = ev["isIncome"] as? Boolean ?: true
+                val sign = if (eAmt >= 0) (if (isInc) "+" else "-") else ""
+                eventsHtml.append("• ").append(eDate).append(" ").append(eName).append(": ")
+                    .append(sign).append(df.format(eAmt)).append(" (").append(eType).append(")<br>")
+            }
+            eventsHtml.append("</div>")
+            
+            val currentTip = cell.toolTipText
+            if (currentTip != null && currentTip.startsWith("<html>") && currentTip.endsWith("</html>")) {
+                cell.toolTipText = currentTip.removeSuffix("</html>") + eventsHtml.toString() + "</html>"
+            } else if (currentTip != null) {
+                cell.toolTipText = "<html>" + currentTip + "<br>" + eventsHtml.toString() + "</html>"
+            } else {
+                cell.toolTipText = "<html>" + eventsHtml.toString() + "</html>"
             }
         }
 
