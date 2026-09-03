@@ -2233,7 +2233,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("      * Salary: **").append(fmt(salSelf + salSp)).append("**\n")
                 append("      * Pension: **").append(fmt(penSelf + penSp)).append("**\n")
                 append("      * Interest: **").append(fmt(taxableIntVal)).append("**\n")
-                append("      * IRA Distribution: **").append(fmt(iraDist - rothConv)).append("**\n")
+                val nuaTransfer = getD("nua_transfer")
+                val nuaBasis = getD("nua_basis")
+                if (nuaTransfer > 0.01) {
+                    append("      * NUA Transfer (Taxable Basis): **").append(fmt(nuaBasis)).append("** (Total Transfer: **").append(fmt(nuaTransfer)).append("**)\n")
+                }
+                append("      * IRA Distribution: **").append(fmt(iraDist - rothConv - nuaTransfer)).append("**\n")
                 if (rothConv > 0.01) {
                     append("      * Roth Conversion: **").append(fmt(rothConv)).append("**\n")
                 }
@@ -2269,7 +2274,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 append("<li>Salary: <strong>").append(fmt(salSelf + salSp)).append("</strong></li>")
                 append("<li>Pension: <strong>").append(fmt(penSelf + penSp)).append("</strong></li>")
                 append("<li>Interest: <strong>").append(fmt(taxableIntVal)).append("</strong></li>")
-                append("<li>IRA Distribution: <strong>").append(fmt(iraDist - rothConv)).append("</strong></li>")
+                val nuaTransfer = getD("nua_transfer")
+                val nuaBasis = getD("nua_basis")
+                if (nuaTransfer > 0.01) {
+                    append("<li>NUA Transfer (Taxable Basis): <strong>").append(fmt(nuaBasis)).append("</strong> (Total Transfer: <strong>").append(fmt(nuaTransfer)).append("</strong>)</li>")
+                }
+                append("<li>IRA Distribution: <strong>").append(fmt(iraDist - rothConv - nuaTransfer)).append("</strong></li>")
                 if (rothConv > 0.01) {
                     append("<li>Roth Conversion: <strong>").append(fmt(rothConv)).append("</strong></li>")
                 }

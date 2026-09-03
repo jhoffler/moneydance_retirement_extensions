@@ -369,10 +369,7 @@ class YearRow(
         dividendRate = formData.getDouble("dividend_rate", 0.5) / 100.0
 
         financialEvents = parseFinancialEvents()
-        val asOfDateFilter = if (previousYear == null) formData.getLocalDate("as_of_date", formData.getLocalDate("start_date", LocalDate.of(year, 1, 1))) else null
-        yearEvents = financialEvents.filter { 
-            it.date.year == year && (asOfDateFilter == null || !it.date.isBefore(asOfDateFilter)) 
-        }
+        yearEvents = financialEvents.filter { it.date.year == year }
 
         for (ev in yearEvents) {
             if (ev.isIncome) {
@@ -387,16 +384,27 @@ class YearRow(
                     "DAF Contribution" -> oneTimeDafContribution += ev.amount
                     "NUA Transfer (IRA to Brokerage)" -> {
                         oneTimeNuaTransfer += ev.amount
-                        oneTimeNuaBasis += if (ev.costBasis > 0.0) ev.costBasis else ev.amount
+                        val basis = if (ev.costBasis > 0.0) ev.costBasis else ev.amount
+                        oneTimeNuaBasis += basis
+                        oneTimeOrdinaryIncome += basis
                     }
                 }
             } else {
                 when (ev.type) {
                     "General Expense" -> oneTimeGeneralExpense += ev.amount
                     "Medical / Eldercare" -> oneTimeMedicalExpense += ev.amount
-                    "Traditional IRA Distribution" -> oneTimeIraDistribution += ev.amount
-                    "Roth IRA Distribution" -> oneTimeRothDistribution += ev.amount
-                    "Taxable Brokerage Distribution" -> oneTimeTaxableDistribution += ev.amount
+                    "Traditional IRA Distribution" -> {
+                        oneTimeIraDistribution += ev.amount
+                        oneTimeOrdinaryIncome += ev.amount
+                        oneTimeNonTaxableIncome += ev.amount
+                    }
+                    "Roth IRA Distribution" -> {
+                        oneTimeRothDistribution += ev.amount
+                        oneTimeNonTaxableIncome += ev.amount
+                    }
+                    "Taxable Brokerage Distribution" -> {
+                        oneTimeTaxableDistribution += ev.amount
+                    }
                     "DAF Distribution" -> oneTimeDafDistribution += ev.amount
                 }
             }
@@ -498,69 +506,7 @@ class YearRow(
         }
 
         val maxDafSavings = dafSavings * (1.0 + investReturnPct)
-        dafDistribution = min(dafDistribution, maxDafSavings)
-
-        // Apply One-Time Contributions to Savings & DAF
-        if (oneTimeIraContribution > 0.0) {
-            iraSavings += oneTimeIraContribution
-            iraCash += oneTimeIraContribution
-        }
-        if (oneTimeRothContribution > 0.0) {
-            rothSavings += oneTimeRothContribution
-            rothCash += oneTimeRothContribution
-        }
-        if (oneTimeTaxableContribution > 0.0) {
-            taxableSavings += oneTimeTaxableContribution
-            taxableCash += oneTimeTaxableContribution
-            taxableCostBasis += oneTimeTaxableContribution
-        }
-        if (oneTimeDafContribution > 0.0) {
-            dafContribution += oneTimeDafContribution
-            dafSavings += oneTimeDafContribution
-        }
-
-        // Apply One-Time NUA Transfer (IRA to Brokerage)
-        if (oneTimeNuaTransfer > 0.0) {
-            val actualNua = min(iraSavings, oneTimeNuaTransfer)
-            val actualBasis = min(actualNua, oneTimeNuaBasis)
-            iraSavings -= actualNua
-            iraCash = max(0.0, iraCash - actualNua)
-            taxableSavings += actualNua
-            taxableCostBasis += actualBasis
-            oneTimeOrdinaryIncome += actualBasis
-        }
-
-        // Apply One-Time Distributions from Savings & DAF
-        if (oneTimeDafDistribution > 0.0) {
-            val dist = min(dafSavings, oneTimeDafDistribution)
-            dafDistribution += dist
-        }
-        if (oneTimeIraDistribution > 0.0) {
-            val dist = min(iraSavings, oneTimeIraDistribution)
-            iraSavings -= dist
-            iraCash = max(0.0, iraCash - dist)
-            iraDistribution += dist
-            oneTimeOrdinaryIncome += dist
-        }
-        if (oneTimeRothDistribution > 0.0) {
-            val dist = min(rothSavings, oneTimeRothDistribution)
-            rothSavings -= dist
-            rothCash = max(0.0, rothCash - dist)
-            rothDistribution += dist
-            oneTimeNonTaxableIncome += dist
-        }
-        if (oneTimeTaxableDistribution > 0.0) {
-            val dist = min(taxableSavings, oneTimeTaxableDistribution)
-            val basisRatio = if (taxableSavings > 0.0) taxableCostBasis / taxableSavings else 1.0
-            val basisUsed = dist * basisRatio
-            val gain = max(0.0, dist - basisUsed)
-            taxableSavings -= dist
-            taxableCash = max(0.0, taxableCash - dist)
-            taxableCostBasis = max(0.0, taxableCostBasis - basisUsed)
-            taxableDistribution += dist
-            realizedGain += gain
-            oneTimeNonTaxableIncome += (dist - gain)
-        }
+        dafDistribution = min(dafDistribution + oneTimeDafDistribution, maxDafSavings)
 
         // Calculate incomes
         calculateBaseIncome(previousYear)
@@ -1485,6 +1431,36 @@ class YearRow(
         taxableCashPre: Double, taxableNonCashPre: Double,
         taxCS: Double
     ) {
+        if (oneTimeNuaTransfer > 0.0) {
+            iraDistribution += oneTimeNuaTransfer
+            taxableDistribution -= oneTimeNuaTransfer
+            actionLogs.add("NUA Transfer \$${String.format("%,.2f", oneTimeNuaTransfer)} of company stock from IRA to Taxable Brokerage (Cost Basis: \$${String.format("%,.2f", oneTimeNuaBasis)}, Taxable Ordinary Income: \$${String.format("%,.2f", oneTimeNuaBasis)}).")
+        }
+        if (oneTimeIraDistribution > 0.0) {
+            iraDistribution += oneTimeIraDistribution
+            actionLogs.add("One-time distribution \$${String.format("%,.2f", oneTimeIraDistribution)} from IRA.")
+        }
+        if (oneTimeRothDistribution > 0.0) {
+            rothDistribution += oneTimeRothDistribution
+            actionLogs.add("One-time distribution \$${String.format("%,.2f", oneTimeRothDistribution)} from Roth.")
+        }
+        if (oneTimeTaxableDistribution > 0.0) {
+            taxableDistribution += oneTimeTaxableDistribution
+            actionLogs.add("One-time distribution \$${String.format("%,.2f", oneTimeTaxableDistribution)} from Taxable Brokerage.")
+        }
+        if (oneTimeIraContribution > 0.0) {
+            iraDistribution -= oneTimeIraContribution
+            actionLogs.add("One-time contribution \$${String.format("%,.2f", oneTimeIraContribution)} to IRA.")
+        }
+        if (oneTimeRothContribution > 0.0) {
+            rothDistribution -= oneTimeRothContribution
+            actionLogs.add("One-time contribution \$${String.format("%,.2f", oneTimeRothContribution)} to Roth.")
+        }
+        if (oneTimeTaxableContribution > 0.0) {
+            taxableDistribution -= oneTimeTaxableContribution
+            actionLogs.add("One-time contribution \$${String.format("%,.2f", oneTimeTaxableContribution)} to Taxable Brokerage.")
+        }
+
         fun applyDist(cashPre: Double, nonCashPre: Double, dist: Double): Pair<Double, Double> {
             if (dist > 0.0) {
                 return if (isRoiNegative) {
@@ -1573,6 +1549,13 @@ class YearRow(
         taxableSavingsEnd = taxC + taxN
         
         val activeLots = taxableLots.map { StockLot(it.name, it.costBasis, it.currentVal) }.toMutableList()
+        if (oneTimeNuaTransfer > 0.0) {
+            val basis = if (oneTimeNuaBasis > 0.0) oneTimeNuaBasis else oneTimeNuaTransfer
+            activeLots.add(StockLot("NUA Stock", basis, oneTimeNuaTransfer))
+        }
+        if (oneTimeTaxableContribution > 0.0) {
+            activeLots.add(StockLot("Contribution", oneTimeTaxableContribution, oneTimeTaxableContribution))
+        }
         val lossLimitStr = formData["roth_max_realized_loss"] ?: ""
         var remainingLossLimit = lossLimitStr.toDoubleOrNull() ?: Double.MAX_VALUE
         
@@ -2263,6 +2246,8 @@ class YearRow(
         result["has_event_daf"] = yearEvents.any { it.type == "DAF Contribution" || it.type == "DAF Distribution" }
         result["has_event_savings"] = (result["has_event_ira"] == true || result["has_event_roth"] == true || result["has_event_taxable"] == true || result["has_event_daf"] == true)
         result["has_event_distro"] = yearEvents.any { it.type.endsWith("Distribution") }
+        result["nua_transfer"] = oneTimeNuaTransfer
+        result["nua_basis"] = oneTimeNuaBasis
         return result
     }
 }
