@@ -16,7 +16,7 @@ book = moneydance.getCurrentAccountBook()   # The current data set / file loaded
 import sys
 import platform
 from java.lang import System
-from com.infinitekind.moneydance.model import AccountUtil, AcctFilter, Account, InvestUtil
+from com.infinitekind.moneydance.model import AccountUtil, AcctFilter, Account, InvestUtil, CurrencyUtil
 
 # Import debugging utilities for newer Moneydance builds
 if moneydance.getBuild() >= 5100:
@@ -36,10 +36,8 @@ class AcctTypeFilter(AcctFilter):
         return acct.getAccountName()
     
     def matches(self, aNacct):
-        """
-        Determines whether the given account matches the filter criteria:
-        1. Account type must be in my_types (Bank or Investment).
-        2. Account must not be inactive.
+        """Determines whether the given account matches the filter criteria:
+        account type in Bank/Investment, and not inactive.
         """
         acctType = aNacct.getAccountType()
         return acctType in self.my_types and not aNacct.getAccountIsInactive()
@@ -88,17 +86,55 @@ class AccountDivider():
         else:
             self.taxables.append(acct)
 
+def is_money_market_fund(sub_acct):
+    """Determines if a security sub-account is a money market fund using criteria from retirement calculator."""
+    # 1. SecurityType override (CD)
+    try:
+        sec_type = sub_acct.getSecurityType()
+        if sec_type is not None and str(sec_type) == "CD":
+            return True
+    except:
+        pass
+
+    # 2. Account Name matching
+    acct_name = (sub_acct.getAccountName() or "").lower()
+    if "money" in acct_name:
+        return True
+
+    # 3. CurrencyType Name & Ticker matching
+    try:
+        curr = sub_acct.getCurrencyType()
+        if curr is not None:
+            curr_name = (curr.getName() or "").lower()
+            if "money" in curr_name:
+                return True
+            ticker = (curr.getTickerSymbol() or "").strip().upper()
+            if len(ticker) >= 4 and ticker.endswith("XX"):
+                return True
+    except:
+        pass
+
+    return False
+
+def getCashBalance(acct):
+    """Calculates the cash balance of an account, treating money market funds like cash."""
+    if acct.getAccountType() == Account.AccountType.INVESTMENT:
+        cash = acct.getBalance()
+        sub_accts = acct.getSubAccounts()
+        if sub_accts:
+            for sub_acct in sub_accts:
+                if sub_acct.getAccountType() == Account.AccountType.SECURITY and is_money_market_fund(sub_acct):
+                    parent = sub_acct.getParentAccount()
+                    parent_curr = parent.getCurrencyType() if parent else book.getCurrencies().getBaseType()
+                    cash += CurrencyUtil.convertValue(sub_acct.getBalance(), sub_acct.getCurrencyType(), parent_curr)
+        return cash
+    else:
+        return acct.getRecursiveBalance()
+
 def getCostBasis(acct):
-    """
-    Calculates the total cost basis for a given account.
-    
-    For INVESTMENT accounts:
-      - Iterates through security sub-accounts.
-      - Calculates cost basis using Moneydance's InvestUtil.
-      - Returns the sum of security cost basis and any uninvested cash (account balance).
-    
-    For other accounts (e.g., BANK):
-      - Returns the current balance as the basis.
+    """Calculates the total cost basis for a given account.
+    For INVESTMENT accounts: sums security cost basis and uninvested cash.
+    For other accounts (e.g. BANK): returns current balance.
     """
     if acct.getAccountType() == Account.AccountType.INVESTMENT:
         total_investment_cost_basis = 0
@@ -122,14 +158,11 @@ def formatCurrency(acct, amount):
     return acct.getCurrencyType().formatFancy(amount, '.')
 
 def sortAndSum(grp):
-    """
-    Sorts a group of accounts alphabetically by name and calculates sums for:
-    - Recursive Balance (total value including sub-accounts)
-    - Cash Balance (uninvested cash or liquid balance)
-    - Cost Basis (total money invested or basis)
+    """Sorts a group of accounts alphabetically by name and calculates sums for
+    recursive balance, cash balance (including money market funds), and cost basis.
     
     Returns:
-      tuple: (sorted_group, total_recursive_balance, total_cash, total_basis)
+        tuple: (sorted_group, total_recursive_balance, total_cash, total_basis)
     """
     grp.sort(key=myFunc)
     total = 0
@@ -137,7 +170,7 @@ def sortAndSum(grp):
     basis = 0
     for acct in grp:
         total += acct.getRecursiveBalance()
-        cash += acct.getBalance()
+        cash += getCashBalance(acct)
         basis += getCostBasis(acct)
     return grp, total, cash, basis
 
@@ -149,7 +182,7 @@ def printAcctGroup(grp):
             acct.getAccountName(), 
             acct.getRecursiveBalance() / 100.0, 
             getCostBasis(acct) / 100.0, 
-            acct.getBalance() / 100.0
+            getCashBalance(acct) / 100.0
         ))
 
 # Print environment and system information

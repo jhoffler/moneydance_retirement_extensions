@@ -155,6 +155,43 @@ fun getHistoricalSecurityCostBasis(book: AccountBook, subAcct: Account, dateInt:
 }
 
 
+fun isMoneyMarketFund(subAcct: Account): Boolean {
+    // 1. SecurityType override (CD)
+    try {
+        val secTypeM = subAcct.javaClass.getMethod("getSecurityType")
+        val secType = secTypeM.invoke(subAcct)
+        if (secType != null && secType.toString() == "CD") {
+            return true
+        }
+    } catch (_: Throwable) {}
+
+    // 2. Account Name matching
+    val acctName = (subAcct.getAccountName() ?: "").lowercase()
+    if (acctName.contains("money")) {
+        return true
+    }
+
+    // 3. CurrencyType Name & Ticker matching
+    try {
+        val getCurrM = subAcct.javaClass.getMethod("getCurrencyType")
+        val curr = getCurrM.invoke(subAcct)
+        if (curr != null) {
+            val getNameM = curr.javaClass.getMethod("getName")
+            val currName = (getNameM.invoke(curr) as? String ?: "").lowercase()
+            if (currName.contains("money")) {
+                return true
+            }
+            val getTickerM = curr.javaClass.getMethod("getTickerSymbol")
+            val ticker = (getTickerM.invoke(curr) as? String ?: "").trim().uppercase()
+            if (ticker.length >= 4 && ticker.endsWith("XX")) {
+                return true
+            }
+        }
+    } catch (_: Throwable) {}
+
+    return false
+}
+
 fun formatDateInt(dateInt: Int): String {
     try {
         val y = dateInt / 10000
@@ -265,6 +302,23 @@ class SummaryWindow(private val extension: Main, private val book: AccountBook) 
             return AccountUtil.getBalanceAsOfDate(book, acct, dateInt)
         }
     }
+
+    private fun getCashBalance(acct: Account, dateInt: Int): Long {
+        if (acct.getAccountType() == Account.AccountType.INVESTMENT) {
+            var cash = AccountUtil.getBalanceAsOfDate(book, acct, dateInt)
+            val subAccounts = acct.getSubAccounts()
+            if (subAccounts != null) {
+                for (subAcct in subAccounts) {
+                    if (subAcct.getAccountType() == Account.AccountType.SECURITY && isMoneyMarketFund(subAcct)) {
+                        cash += getRecursiveBalanceAsOfDate(book, subAcct, dateInt)
+                    }
+                }
+            }
+            return cash
+        } else {
+            return getRecursiveBalanceAsOfDate(book, acct, dateInt)
+        }
+    }
     
     private fun sortAndSum(grp: List<Account>, dateInt: Int): GroupSummary {
         val sorted = grp.sortedBy { it.getAccountName() ?: "" }
@@ -273,7 +327,7 @@ class SummaryWindow(private val extension: Main, private val book: AccountBook) 
         var basis = 0L
         for (acct in sorted) {
             total += getRecursiveBalanceAsOfDate(book, acct, dateInt)
-            cash += AccountUtil.getBalanceAsOfDate(book, acct, dateInt)
+            cash += getCashBalance(acct, dateInt)
             basis += getCostBasis(acct, dateInt)
         }
         return GroupSummary(sorted, total, cash, basis)
@@ -363,7 +417,7 @@ class SummaryWindow(private val extension: Main, private val book: AccountBook) 
             val bal = getRecursiveBalanceAsOfDate(book, acct, dateInt)
             val bs = getCostBasis(acct, dateInt)
             val gains = bal - bs
-            val cashBal = AccountUtil.getBalanceAsOfDate(book, acct, dateInt)
+            val cashBal = getCashBalance(acct, dateInt)
             rows.add(TableRowData(
                 acct.getAccountName() ?: "",
                 bal,

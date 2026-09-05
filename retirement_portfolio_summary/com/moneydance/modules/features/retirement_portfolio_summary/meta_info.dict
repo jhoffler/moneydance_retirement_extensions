@@ -3,7 +3,7 @@
   "module_name" = "Retirement Portfolio Summary"
   "module_desc" = "Groups accounts by tax categories and displays summary table."
   "desc" = "Groups accounts by tax categories and displays summary table."
-  "module_build" = "201"
+  "module_build" = "29810423"
   "minbuild" = "3056"
   "vendor" = "John Hoffler"
   "vendor.url" = "https://hofflergroup.com"

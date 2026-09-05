@@ -14,7 +14,7 @@ from javax.swing import (JFrame, JPanel, JLabel, JTable, JScrollPane, Box,
 from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer
 from java.awt import Dimension, BorderLayout, Font, Color, GridBagLayout, GridBagConstraints, Insets
 from java.awt.print import Printable, PrinterJob, PrinterException
-from com.infinitekind.moneydance.model import AccountUtil, AcctFilter, Account, InvestUtil
+from com.infinitekind.moneydance.model import AccountUtil, AcctFilter, Account, InvestUtil, CurrencyUtil
 
 # Accessing Moneydance API Globals
 global moneydance
@@ -55,6 +55,51 @@ class AccountDivider():
         else:
             self.taxables.append(acct)
 
+def is_money_market_fund(sub_acct):
+    """Determines if a security sub-account is a money market fund using criteria from retirement calculator."""
+    # 1. SecurityType override (CD)
+    try:
+        sec_type = sub_acct.getSecurityType()
+        if sec_type is not None and str(sec_type) == "CD":
+            return True
+    except:
+        pass
+
+    # 2. Account Name matching
+    acct_name = (sub_acct.getAccountName() or "").lower()
+    if "money" in acct_name:
+        return True
+
+    # 3. CurrencyType Name & Ticker matching
+    try:
+        curr = sub_acct.getCurrencyType()
+        if curr is not None:
+            curr_name = (curr.getName() or "").lower()
+            if "money" in curr_name:
+                return True
+            ticker = (curr.getTickerSymbol() or "").strip().upper()
+            if len(ticker) >= 4 and ticker.endswith("XX"):
+                return True
+    except:
+        pass
+
+    return False
+
+def getCashBalance(acct):
+    """Calculates the cash balance of an account, treating money market funds like cash."""
+    if acct.getAccountType() == Account.AccountType.INVESTMENT:
+        cash = acct.getBalance()
+        sub_accts = acct.getSubAccounts()
+        if sub_accts:
+            for sub_acct in sub_accts:
+                if sub_acct.getAccountType() == Account.AccountType.SECURITY and is_money_market_fund(sub_acct):
+                    parent = sub_acct.getParentAccount()
+                    parent_curr = parent.getCurrencyType() if parent else book.getCurrencies().getBaseType()
+                    cash += CurrencyUtil.convertValue(sub_acct.getBalance(), sub_acct.getCurrencyType(), parent_curr)
+        return cash
+    else:
+        return acct.getRecursiveBalance()
+
 def getCostBasis(acct):
     """Calculates the cost basis of the account."""
     if acct.getAccountType() == Account.AccountType.INVESTMENT:
@@ -75,7 +120,7 @@ def sortAndSum(grp):
     basis = 0
     for acct in grp:
         total += acct.getRecursiveBalance()
-        cash += acct.getBalance()
+        cash += getCashBalance(acct)
         basis += getCostBasis(acct)
     return grp, total, cash, basis
 
@@ -193,7 +238,7 @@ def createAccountTable(accounts, total, cash, basis, name_width):
             bal,
             bs,
             gains,
-            acct.getBalance()
+            getCashBalance(acct)
         ))
         
     # Append group totals
