@@ -66,10 +66,21 @@ cmd = [
     "-jvm-target", "17"
 ]
 
-# Point to the JDK JRE we found in the IDE java extension
-java_home = r"C:\Users\jhoff\.antigravity-ide\extensions\redhat.java-1.55.0-win32-x64\jre\21.0.11-win32-x86_64"
+# Point to Java JRE
+candidates = [
+    r"C:\Program Files\Moneydance\jre",
+    r"C:\Users\jhoff\.antigravity-ide\extensions\redhat.java-1.56.0-win32-x64\jre\21.0.12.1-win32-x86_64",
+    r"C:\Users\jhoff\.antigravity-ide\extensions\redhat.java-1.55.0-win32-x64\jre\21.0.11-win32-x86_64"
+]
+java_home = candidates[0]
+for c in candidates:
+    if os.path.exists(c):
+        java_home = c
+        break
+
 env = os.environ.copy()
 env["JAVA_HOME"] = java_home
+env["PATH"] = os.path.join(java_home, "bin") + ";" + env.get("PATH", "")
 
 result = subprocess.run(cmd, env=env, capture_output=True, text=True)
 if result.returncode != 0:

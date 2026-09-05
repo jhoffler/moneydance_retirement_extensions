@@ -133,9 +133,6 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
 
     init {
         setupUI()
-        
-        val today = LocalDate.now()
-        dateFields["start_date"]?.dateInt = today.year * 10000 + today.monthValue * 100 + today.dayOfMonth
 
         // Initial populate from default data
         setFormData(defaultData)
@@ -143,6 +140,10 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         // Try to restore configuration from Moneydance localStorage
         restoreConfigFromLocalStorage()
         updateDefaultRothEndAge()
+
+        // Set Start Date to the current date on load
+        val today = LocalDate.now()
+        dateFields["start_date"]?.dateInt = today.year * 10000 + today.monthValue * 100 + today.dayOfMonth
         
         // Read account balances from MoneyDance if possible
         loadMoneyDanceBalances()
@@ -150,12 +151,12 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         // Perform initial calculation
         recalc()
         
-        defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+        defaultCloseOperation = JFrame.DO_NOTHING_ON_CLOSE
         
-        // Save config when window is closed
+        // Save config and close console when window is closed
         this.addWindowListener(object : java.awt.event.WindowAdapter() {
             override fun windowClosing(e: java.awt.event.WindowEvent?) {
-                saveConfigToLocalStorage()
+                extension.closeConsole()
             }
         })
         
@@ -923,6 +924,10 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                 }
                 continue
             }
+            if (k == "start_taxable_mmf") {
+                startTaxableMmf = v.toDoubleOrNull() ?: 0.0
+                continue
+            }
             val df = dateFields[k]
             if (df != null) {
                 if (v.isEmpty()) {
@@ -988,7 +993,47 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         }
         map.putAll(pensionsConfig)
         map.putAll(eventsConfig)
+        map["start_taxable_mmf"] = startTaxableMmf.toString()
         return map
+    }
+
+    private var startTaxableMmf: Double = 0.0
+
+    private fun isMoneyMarketFund(subAcct: com.infinitekind.moneydance.model.Account): Boolean {
+        // 1. SecurityType override (CD)
+        try {
+            val secTypeM = subAcct.javaClass.getMethod("getSecurityType")
+            val secType = secTypeM.invoke(subAcct)
+            if (secType != null && secType.toString() == "CD") {
+                return true
+            }
+        } catch (_: Throwable) {}
+
+        // 2. Account Name matching
+        val acctName = (subAcct.getAccountName() ?: "").lowercase()
+        if (acctName.contains("money")) {
+            return true
+        }
+
+        // 3. CurrencyType Name & Ticker matching
+        try {
+            val getCurrM = subAcct.javaClass.getMethod("getCurrencyType")
+            val curr = getCurrM.invoke(subAcct)
+            if (curr != null) {
+                val getNameM = curr.javaClass.getMethod("getName")
+                val currName = (getNameM.invoke(curr) as? String ?: "").lowercase()
+                if (currName.contains("money")) {
+                    return true
+                }
+                val getTickerM = curr.javaClass.getMethod("getTickerSymbol")
+                val ticker = (getTickerM.invoke(curr) as? String ?: "").trim().uppercase()
+                if (ticker.length >= 4 && ticker.endsWith("XX")) {
+                    return true
+                }
+            }
+        } catch (_: Throwable) {}
+
+        return false
     }
 
     // MoneyDance Balance Loading
@@ -1054,8 +1099,33 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                         for (acct in grp) {
                             if (acct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.INVESTMENT) {
                                 sum += com.infinitekind.moneydance.model.AccountUtil.getBalanceAsOfDate(mdBook, acct, dateInt)
+                                val subAccounts = acct.getSubAccounts()
+                                if (subAccounts != null) {
+                                    for (subAcct in subAccounts) {
+                                        if (subAcct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.SECURITY && isMoneyMarketFund(subAcct)) {
+                                            sum += getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                        }
+                                    }
+                                }
                             } else {
                                 sum += getRecursiveBalanceAsOfDate(mdBook, acct, dateInt)
+                            }
+                        }
+                        return sum
+                    }
+
+                    fun sumMmf(grp: List<com.infinitekind.moneydance.model.Account>): Long {
+                        var sum = 0L
+                        for (acct in grp) {
+                            if (acct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.INVESTMENT) {
+                                val subAccounts = acct.getSubAccounts()
+                                if (subAccounts != null) {
+                                    for (subAcct in subAccounts) {
+                                        if (subAcct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.SECURITY && isMoneyMarketFund(subAcct)) {
+                                            sum += getRecursiveBalanceAsOfDate(mdBook, subAcct, dateInt)
+                                        }
+                                    }
+                                }
                             }
                         }
                         return sum
@@ -1068,6 +1138,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                             if (subAccounts != null) {
                                 for (subAcct in subAccounts) {
                                     if (subAcct.getAccountType() == com.infinitekind.moneydance.model.Account.AccountType.SECURITY) {
+                                        if (isMoneyMarketFund(subAcct)) {
+                                            continue
+                                        }
                                         val lotsTable = com.infinitekind.moneydance.model.InvestUtil.getRemainingLots(mdBook, subAcct, dateInt)
                                         if (lotsTable != null && !lotsTable.isEmpty()) {
                                             for (key in lotsTable.keys) {
@@ -1192,6 +1265,8 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                     val otherCash = sumCash(divider.taxables)
                     val otherBasis = sumBasis(divider.taxables)
                     val dafBal = sumAccounts(dafAccounts)
+                    val taxableMmf = sumMmf(divider.taxables)
+                    startTaxableMmf = taxableMmf / 100.0
 
                     SwingUtilities.invokeLater {
                         textFields["start_taxable_lots"]?.text = lotsStr
@@ -1893,6 +1968,9 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
                     val valStr = m.groupValues[2].replace("\\\"", "\"")
                     map[key] = valStr
                 }
+                map.remove("start_date")
+                map.remove("start_year")
+                map.remove("as_of_date")
                 setFormData(map)
             }
         } catch (e: Exception) {

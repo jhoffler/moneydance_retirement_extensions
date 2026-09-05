@@ -277,6 +277,7 @@ class YearRow(
     var interest: Double = 0.0
     var taxableDividends: Double = 0.0
     var taxableInterest: Double = 0.0
+    var taxableMmfEnd: Double = 0.0
 
     var otherExpenses: Double = 0.0
     var mortgage: Double = 0.0
@@ -782,13 +783,23 @@ class YearRow(
         val (rothCS, rothNCS) = getStartCashAndStock(rothSavings, rothCash)
         val (taxCS, taxNCS) = getStartCashAndStock(taxableSavings, taxableCash)
         
+        val taxableMmfStart = if (previousYear == null) {
+            formData.getDouble("start_taxable_mmf", 0.0)
+        } else {
+            previousYear.taxableMmfEnd
+        }
+        val mmfRatio = if (taxableCash > 0.0) min(1.0, max(0.0, taxableMmfStart / taxableCash)) else 0.0
+        val mmfCash = taxCS * mmfRatio
+        val pureCash = max(0.0, taxCS - mmfCash)
+        taxableMmfEnd = mmfCash
+
         val iraInterest = iraCS * interestRate
         val rothInterest = rothCS * interestRate
-        val taxableInterest = taxCS * interestRate
+        val taxableInterest = pureCash * interestRate
         
         val iraDividends = iraNCS * dividendRate
         val rothDividends = rothNCS * dividendRate
-        val taxableDividends = taxNCS * dividendRate
+        val taxableDividends = (taxNCS * dividendRate) + (mmfCash * interestRate)
         
         interest = iraInterest + rothInterest + taxableInterest
         dividends = iraDividends + rothDividends + taxableDividends
