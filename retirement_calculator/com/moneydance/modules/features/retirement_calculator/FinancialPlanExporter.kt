@@ -53,13 +53,17 @@ object FinancialPlanExporter {
         val sb = StringBuilder()
         val htmlSb = StringBuilder()
 
+        val df = DecimalFormat("$#,##0").apply {
+            roundingMode = java.math.RoundingMode.HALF_UP
+        }
         val fmt = { v: Any? ->
             val d = when (v) {
                 is Number -> v.toDouble()
                 is String -> v.replace("$", "").replace(",", "").toDoubleOrNull() ?: 0.0
                 else -> 0.0
             }
-            DecimalFormat("$#,##0.00").format(d)
+            val rounded = Math.round(d)
+            if (rounded == 0L) "$0" else df.format(rounded)
         }
 
         val appendHtmlTableRow = { hsb: StringBuilder, cells: List<String>, isHeader: Boolean, isTotal: Boolean ->
@@ -137,7 +141,7 @@ object FinancialPlanExporter {
             sb.append("| IRA | ").append(fmt(iraSav)).append(" | N/A | ").append(fmt(iraCsh)).append(" | ").append(fmt(iraRoi)).append(" | ").append(fmt(iraDiv)).append(" | ").append(fmt(iraInt)).append(" |\n")
             sb.append("| Roth | ").append(fmt(rothSav)).append(" | N/A | ").append(fmt(rothCsh)).append(" | ").append(fmt(rothRoi)).append(" | ").append(fmt(rothDiv)).append(" | ").append(fmt(rothInt)).append(" |\n")
             sb.append("| Taxable Brokerage | ").append(fmt(taxSav)).append(" | ").append(fmt(taxBasis)).append(" | ").append(fmt(taxCsh)).append(" | ").append(fmt(taxRoi)).append(" | ").append(fmt(taxDiv)).append(" | ").append(fmt(taxInt)).append(" |\n")
-            sb.append("| DAF | ").append(fmt(dafSav)).append(" | N/A | $0.00 | ").append(fmt(dafRoi)).append(" | $0.00 | $0.00 |\n")
+            sb.append("| DAF | ").append(fmt(dafSav)).append(" | N/A | $0 | ").append(fmt(dafRoi)).append(" | $0 | $0 |\n")
             sb.append("| **Total** | **").append(fmt(totSav)).append("** | **").append(fmt(taxBasis)).append("** | **").append(fmt(iraCsh + rothCsh + taxCsh)).append("** | **").append(fmt(totRoi)).append("** | **").append(fmt(totDiv)).append("** | **").append(fmt(totInt)).append("** |\n\n")
             sb.append("</div>\n\n")
 
@@ -147,7 +151,7 @@ object FinancialPlanExporter {
             appendHtmlTableRow(htmlTable, listOf("IRA", fmt(iraSav), "N/A", fmt(iraCsh), fmt(iraRoi), fmt(iraDiv), fmt(iraInt)), false, false)
             appendHtmlTableRow(htmlTable, listOf("Roth", fmt(rothSav), "N/A", fmt(rothCsh), fmt(rothRoi), fmt(rothDiv), fmt(rothInt)), false, false)
             appendHtmlTableRow(htmlTable, listOf("Taxable Brokerage", fmt(taxSav), fmt(taxBasis), fmt(taxCsh), fmt(taxRoi), fmt(taxDiv), fmt(taxInt)), false, false)
-            appendHtmlTableRow(htmlTable, listOf("DAF", fmt(dafSav), "N/A", "$0.00", fmt(dafRoi), "$0.00", "$0.00"), false, false)
+            appendHtmlTableRow(htmlTable, listOf("DAF", fmt(dafSav), "N/A", "$0", fmt(dafRoi), "$0", "$0"), false, false)
             appendHtmlTableRow(htmlTable, listOf("Total", fmt(totSav), fmt(taxBasis), fmt(iraCsh + rothCsh + taxCsh), fmt(totRoi), fmt(totDiv), fmt(totInt)), false, true)
             htmlTable.append("</table>\n")
             htmlSb.append(htmlTable.toString())
@@ -453,17 +457,17 @@ object FinancialPlanExporter {
                 var match = sellRegex.matchEntire(log)
                 if (match != null) {
                     val rawAmt = match.groupValues[1]
-                    val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                    val amount = fmt(rawAmt)
                     val asset = match.groupValues[2].trim()
                     val rawGain = match.groupValues[4]
-                    val gain = if (rawGain.startsWith("-")) "-$" + rawGain.substring(1) else "$" + rawGain
+                    val gain = fmt(rawGain)
                     val purpose = match.groupValues[5].trim().replaceFirstChar { it.uppercase() }
                     row = ActionRow("Sell", asset, amount, gain, purpose)
                 } else {
                     match = convertRegex.matchEntire(log)
                     if (match != null) {
                         val rawAmt = match.groupValues[1]
-                        val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                        val amount = fmt(rawAmt)
                         val fromAsset = match.groupValues[2].trim()
                         val toAsset = match.groupValues[3].trim()
                         val assetName = if (toAsset.lowercase().contains("cash")) "Roth Cash" else "Roth Stock"
@@ -472,7 +476,7 @@ object FinancialPlanExporter {
                         match = donateRegex.matchEntire(log)
                         if (match != null) {
                             val rawAmt = match.groupValues[1]
-                            val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                            val amount = fmt(rawAmt)
                             val asset = match.groupValues[2].trim()
                             val rawBasis = match.groupValues[3]
                             val purpose = "Donate directly to " + match.groupValues[4].trim()
@@ -480,17 +484,13 @@ object FinancialPlanExporter {
                             val amtVal = rawAmt.replace(",", "").toDoubleOrNull() ?: 0.0
                             val basisVal = rawBasis.replace(",", "").toDoubleOrNull() ?: 0.0
                             val gainVal = amtVal - basisVal
-                            val gainStr = if (gainVal >= 0.0) {
-                                "($" + String.format("%,.2f", gainVal) + ")"
-                            } else {
-                                "(-$" + String.format("%,.2f", -gainVal) + ")"
-                            }
+                            val gainStr = "(" + fmt(gainVal) + ")"
                             row = ActionRow("Donate", asset, amount, gainStr, purpose)
                         } else {
                             match = qcdRegex.matchEntire(log)
                             if (match != null) {
                                 val rawAmt = match.groupValues[1]
-                                val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                val amount = fmt(rawAmt)
                                 val asset = match.groupValues[2].trim()
                                 val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
                                 row = ActionRow("QCD", asset, amount, "N/A", purpose)
@@ -498,7 +498,7 @@ object FinancialPlanExporter {
                                 match = purchaseRegex.matchEntire(log)
                                 if (match != null) {
                                     val rawAmt = match.groupValues[1]
-                                    val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                    val amount = fmt(rawAmt)
                                     val asset = match.groupValues[2].trim()
                                     val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
                                     row = ActionRow("Buy", asset, amount, "N/A", purpose)
@@ -506,7 +506,7 @@ object FinancialPlanExporter {
                                     match = withdrawRegex.matchEntire(log)
                                     if (match != null) {
                                         val rawAmt = match.groupValues[1]
-                                        val amount = if (rawAmt.startsWith("-")) "-$" + rawAmt.substring(1) else "$" + rawAmt
+                                        val amount = fmt(rawAmt)
                                         val asset = match.groupValues[2].trim()
                                         val purpose = match.groupValues[3].trim().replaceFirstChar { it.uppercase() }
                                         row = ActionRow("Withdraw", asset, amount, "N/A", purpose)
