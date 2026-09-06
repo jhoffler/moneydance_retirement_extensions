@@ -109,3 +109,14 @@ with zipfile.ZipFile(mxt_file, 'w') as zipf:
     zipf.write(meta_info_src, "com/moneydance/modules/features/retirement_portfolio_summary/meta_info.dict")
 
 print(f"Successfully created: {mxt_file}")
+
+# 6. Copy to Shared Drive
+shared_dir = r"G:\Shared drives\Finance Shared Drive\Retirement\Retirement Calculator"
+try:
+    if os.path.exists(shared_dir):
+        shutil.copy(mxt_file, shared_dir)
+        print(f"Copied MXT file to: {shared_dir}")
+    else:
+        print(f"Warning: Shared drive path does not exist: {shared_dir}")
+except Exception as e:
+    print(f"Warning: Could not copy MXT file to shared drive: {e}")
