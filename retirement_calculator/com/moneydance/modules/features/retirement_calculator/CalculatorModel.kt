@@ -25,6 +25,7 @@ class YearRow(
     
     var inflationAdjustmentFactor: Double = 1.0
     var ssInflationAdjustmentFactor: Double = 1.0
+    var taxInflationAdjustmentFactor: Double = 1.0
 
     val birthDateSelf: LocalDate
     val birthDateSpouse: LocalDate
@@ -376,9 +377,9 @@ class YearRow(
         val isSingle = (ageSelf > deathAgeSelf) || (ageSpouse > deathAgeSpouse)
         val survivorAge = if (ageSelf <= deathAgeSelf) ageSelf else ageSpouse
         standardDeduction = if (isSingle) {
-            (STD_DEDUCTION / 2.0) * inflationAdjustmentFactor + (if (survivorAge >= 65) OBBBA_DEDUCTION else 0.0)
+            (STD_DEDUCTION / 2.0) * taxInflationAdjustmentFactor + (if (survivorAge >= 65) OBBBA_DEDUCTION else 0.0)
         } else {
-            STD_DEDUCTION * inflationAdjustmentFactor + (if (ageOldest >= 65) OBBBA_DEDUCTION else 0.0)
+            STD_DEDUCTION * taxInflationAdjustmentFactor + (if (ageOldest >= 65) OBBBA_DEDUCTION else 0.0)
         }
 
         calcTaxes()
@@ -387,14 +388,18 @@ class YearRow(
     private fun calcInflationAdjustment(): Double {
         var factor = 1.0
         var ssFactor = 1.0
+        var taxFactor = 1.0
         var cur = previousYear
         while (cur != null) {
             factor *= (1.0 + cur.inflationPct)
             ssFactor *= (1.0 + max(0.0, cur.inflationPct))
+            // Tax brackets and standard deductions are adjusted by Chained CPI (C-CPI-U), ~0.2% lower than CPI-U
+            taxFactor *= (1.0 + max(0.0, cur.inflationPct - 0.002))
             cur = cur.previousYear
         }
         inflationAdjustmentFactor = factor
         ssInflationAdjustmentFactor = ssFactor
+        taxInflationAdjustmentFactor = taxFactor
         return factor
     }
 
@@ -725,7 +730,7 @@ class YearRow(
                 remaining -= rothCashUsed
                 
                 // 2.5 Remaining IRA cash up to 12% ordinary tax bracket ceiling (safety cap)
-                val cap12Ceiling = TAX_RATES_FED[1].maxIncome * inflationAdjustmentFactor
+                val cap12Ceiling = TAX_RATES_FED[1].maxIncome * taxInflationAdjustmentFactor
                 val currentGrossOrdinary = salarySelf + salarySpouse + pensionSelf + pensionSpouse + taxableInterest + rmdValue + lvl1Total
                 val room12 = max(0.0, (cap12Ceiling + standardDeduction) - currentGrossOrdinary)
                 
@@ -1119,13 +1124,13 @@ class YearRow(
                             
                             val ceiling = when (maxOrdinaryBracket) {
                                 "Std Ded" -> result.totalDeductions
-                                "10%" -> TAX_RATES_FED[0].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "12%" -> TAX_RATES_FED[1].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "22%" -> TAX_RATES_FED[2].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "24%" -> TAX_RATES_FED[3].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "32%" -> TAX_RATES_FED[4].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "35%" -> TAX_RATES_FED[5].maxIncome * inflationAdjustmentFactor * scaleBracket
-                                "37%" -> TAX_RATES_FED[6].maxIncome * inflationAdjustmentFactor * scaleBracket
+                                "10%" -> TAX_RATES_FED[0].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "12%" -> TAX_RATES_FED[1].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "22%" -> TAX_RATES_FED[2].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "24%" -> TAX_RATES_FED[3].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "32%" -> TAX_RATES_FED[4].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "35%" -> TAX_RATES_FED[5].maxIncome * taxInflationAdjustmentFactor * scaleBracket
+                                "37%" -> TAX_RATES_FED[6].maxIncome * taxInflationAdjustmentFactor * scaleBracket
                                 else -> Double.MAX_VALUE
                             }
                             if (result.taxableOrdinaryIncome > ceiling + 0.01) {
@@ -1621,8 +1626,8 @@ class YearRow(
         var ordTax = 0.0
         for (idx in TAX_RATES_FED.indices) {
             val bracket = TAX_RATES_FED[idx]
-            val prevMax = if (idx > 0) TAX_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor * scaleBracket else 0.0
-            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
+            val prevMax = if (idx > 0) TAX_RATES_FED[idx - 1].maxIncome * taxInflationAdjustmentFactor * scaleBracket else 0.0
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * taxInflationAdjustmentFactor * scaleBracket
             if (taxableOrdinaryIncome > currentMax) {
                 ordTax += (currentMax - prevMax) * bracket.rate
             } else {
@@ -1638,8 +1643,8 @@ class YearRow(
         var totalTax = 0.0
         for (idx in CAP_GAINS_RATES_FED.indices) {
             val bracket = CAP_GAINS_RATES_FED[idx]
-            val prevMax = if (idx > 0) CAP_GAINS_RATES_FED[idx - 1].maxIncome * inflationAdjustmentFactor * scaleBracket else 0.0
-            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
+            val prevMax = if (idx > 0) CAP_GAINS_RATES_FED[idx - 1].maxIncome * taxInflationAdjustmentFactor * scaleBracket else 0.0
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * taxInflationAdjustmentFactor * scaleBracket
 
             if (taxableOrdinaryIncome > prevMax) {
                 val amountInBracket = min(taxableOrdinaryIncome, currentMax) - prevMax
@@ -1652,7 +1657,7 @@ class YearRow(
         }
         capGainsTax = totalTax - baseTax
 
-        val stateStandard = (if (isSingle) formData.getDouble("state_std_deduction", 22500.0) / 2.0 else formData.getDouble("state_std_deduction", 22500.0)) * inflationAdjustmentFactor
+        val stateStandard = (if (isSingle) formData.getDouble("state_std_deduction", 22500.0) / 2.0 else formData.getDouble("state_std_deduction", 22500.0)) * taxInflationAdjustmentFactor
         val stateDeduction = max(stateStandard, itemizedDeductions)
         val stateIncome = max(0.0, grossOrdinaryIncome - stateDeduction)
         stateTaxes = stateIncome * formData.getDouble("state_tax_rate", 4.5) / 100.0
@@ -1664,7 +1669,7 @@ class YearRow(
         var ordLimit = Double.MAX_VALUE
         for (idx in TAX_RATES_FED.indices) {
             val bracket = TAX_RATES_FED[idx]
-            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * inflationAdjustmentFactor * scaleBracket
+            val currentMax = if (bracket.maxIncome == Double.MAX_VALUE) Double.MAX_VALUE else bracket.maxIncome * taxInflationAdjustmentFactor * scaleBracket
             if (taxableOrdinaryIncome <= currentMax) {
                 ordRate = bracket.rate
                 ordLimit = currentMax
@@ -1676,7 +1681,7 @@ class YearRow(
         var cgLimit = Double.MAX_VALUE
         for (idx in CAP_GAINS_RATES_FED.indices) {
             val bracket = CAP_GAINS_RATES_FED[idx]
-            val currentMax = bracket.maxIncome * inflationAdjustmentFactor
+            val currentMax = bracket.maxIncome * taxInflationAdjustmentFactor * scaleBracket
             if (totalTaxableIncome <= currentMax) {
                 cgRate = bracket.rate
                 cgLimit = currentMax
@@ -2042,6 +2047,7 @@ class YearRow(
         result["total_deductions"] = totalDeductionsClaimed
         result["fed_taxable_ss"] = fedTaxableSocialSecurity
         result["inflation_pct"] = inflationPct
+        result["tax_inflation_factor"] = taxInflationAdjustmentFactor
         result["guardrail_msg"] = guardrailAdjustmentMessage ?: ""
         result["stock_lots"] = taxableLotsStart.map { StockLot(it.name, it.costBasis, it.currentVal) }
         result["one_time_events"] = yearEvents.map { ev ->
