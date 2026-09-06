@@ -233,7 +233,7 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         simChartPanel.onRunSelected = { index ->
             showSimulationRun(index)
         }
-        mainTabbedPane.addTab("Help", createHelpPanel())
+        mainTabbedPane.addTab("Help", CalculatorHelp.createHelpPanel())
         
         val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, configTabs, mainTabbedPane)
         splitPane.dividerLocation = 380
@@ -800,32 +800,6 @@ class CalculatorWindow(private val extension: Main, private val mdBook: com.infi
         return p
     }
 
-    private fun createHelpPanel(): JScrollPane {
-        val helpText = JEditorPane()
-        helpText.contentType = "text/html"
-        helpText.isEditable = false
-        helpText.text = """
-        <html>
-        <body style="font-family: sans-serif; margin: 15px;">
-        <h2 style="color: #1a527f;">Retirement Calculator Help Guide</h2>
-        <p>This tool helps you model your retirement projections using custom tax, spending, and Monte Carlo market simulations.</p>
-        <h3>Using the Calculator:</h3>
-        <ol>
-            <li><strong>Recalculate:</strong> Evaluates a single-path projection based on your inputs and populates the table and Net Worth chart.</li>
-            <li><strong>Run Simulation:</strong> Evaluates multiple paths under volatile ROI & inflation rates using a Monte Carlo simulation. Draws the success chart.</li>
-            <li><strong>Optimizations:</strong> Runs search loops to find the combination of starting ages that maximizes final net worth.</li>
-        </ol>
-        <h3>Distribution Order:</h3>
-        <ul>
-            <li><strong>IRA:</strong> Up to the top of the 0% tax bracket or RMD. Excess converts to Roth.</li>
-            <li><strong>Other Savings:</strong> Withdrawals taken up to 0% capital gains bracket.</li>
-            <li><strong>Roth:</strong> Fills any remaining expenses.</li>
-        </ul>
-        </body>
-        </html>
-        """.trimIndent()
-        return JScrollPane(helpText)
-    }
 
 
     private fun formatDollar(value: Double): String {
