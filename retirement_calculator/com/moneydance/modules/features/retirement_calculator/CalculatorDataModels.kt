@@ -1,5 +1,6 @@
 package com.moneydance.modules.features.retirement_calculator
 
+import java.text.DecimalFormat
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -173,4 +174,9 @@ fun Map<String, String>.getLocalDate(key: String, default: LocalDate = LocalDate
 
 fun Map<String, String>.getBoolean(key: String, default: Boolean = false): Boolean {
     return this[key]?.toBoolean() ?: default
+}
+
+internal fun formatDollar(value: Double): String {
+    val df = DecimalFormat("#,##0.##")
+    return df.format(value)
 }
